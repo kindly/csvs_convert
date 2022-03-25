@@ -1,0 +1,20 @@
+---
+source: src/lib.rs
+assertion_line: 186
+expression: "merge_datapackage_json(vec![format! (\"fixtures/{datapackage1}.json\"), format!\n                            (\"fixtures/{datapackage2}.json\")]).unwrap()"
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: games
+    schema:
+      fields:
+        - name: id
+          type: string
+          count: 4
+        - name: title
+          type: string
+          count: 4
+      primaryKey: _link
+    path: csv/games.csv
+

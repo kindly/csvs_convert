@@ -1,0 +1,35 @@
+---
+source: src/lib.rs
+assertion_line: 191
+expression: "merge_datapackage_json(vec![\"fixtures/base_datapackage.json\".into(),\n                            \"fixtures/base_datapackage.json\".into(),\n                            \"fixtures/add_resource.json\".into(),\n                            \"fixtures/add_different_resource.json\".into(),\n                            \"fixtures/add_field.json\".into(),\n                            \"fixtures/conflict_types.json\".into()]).unwrap()"
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: games
+    schema:
+      fields:
+        - name: id
+          type: string
+          count: 10
+        - name: title
+          type: string
+          count: 8
+        - name: title2
+          type: string
+          count: 2
+      primaryKey: _link
+    path: csv/games.csv
+  - profile: tabular-data-resource
+    name: games2
+    schema:
+      fields:
+        - name: id
+          type: number
+          count: 4
+        - name: title
+          type: string
+          count: 4
+      primaryKey: _link
+    path: csv/games2.csv
+
