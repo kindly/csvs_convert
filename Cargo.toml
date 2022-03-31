@@ -7,12 +7,13 @@ edition = "2021"
 
 [dependencies]
 
-parquet = "9.1.0"
-arrow = "9.1.0"
+parquet = "10.0.0"
+arrow = "10.0.0"
 serde_json = { version = "1", features = ["preserve_order"] }
 csv = "1"
 snafu = {version = "0.7.0"}
 zip = "0.6"
+tempfile = "3"
 
 [dev-dependencies]
 insta = {version = "1.12.0", features = ["redactions"]}

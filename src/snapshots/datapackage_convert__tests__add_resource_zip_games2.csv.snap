@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+assertion_line: 310
+expression: lines
+---
+- "id,title"
+- "1,game1_add_resource"
+- "2,game2_add_resource"
+
