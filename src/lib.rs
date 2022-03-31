@@ -19,25 +19,28 @@ pub enum Error {
     JSONError { source: serde_json::Error, filename: String },
 
     #[snafu(display("Error loading zip file {}: {}", filename, source))]
-    ZipError { source: zip::result::ZipError, filename: String }
+    ZipError { source: zip::result::ZipError, filename: String },
+
+    #[snafu(display("Error loading zip file {}: {}", filename, source))]
+    CSVError { source: csv::Error, filename: String }
 }
 
 fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error>{
     let mut fields = resource["schema"]["fields"].take();
     let fields_option = fields.as_array_mut();
 
-    ensure!(!fields_option.is_none(), DatapackageMergeSnafu {message: "Datapackages need a `fields` list"});
+    ensure!(fields_option.is_some(), DatapackageMergeSnafu {message: "Datapackages need a `fields` list"});
 
     let mut new_fields = serde_json::Map::new();
     for field in fields_option.unwrap().drain(..) {
         let name_option = field["name"].as_str();
-        ensure!(!name_option.is_none(), DatapackageMergeSnafu {message: "Each field needs a name"});
+        ensure!(name_option.is_some(), DatapackageMergeSnafu {message: "Each field needs a name"});
         new_fields.insert(name_option.unwrap().to_owned(), field);
     };
 
     resource["schema"].as_object_mut().unwrap().insert("fields".to_string(), new_fields.into());
 
-    return Ok(resource)
+    Ok(resource)
 }
 
 fn make_mergeable_datapackage(mut value: Value) -> Result<Value, Error> {
@@ -45,14 +48,14 @@ fn make_mergeable_datapackage(mut value: Value) -> Result<Value, Error> {
     let mut resources = value["resources"].take();
 
     let resources_option = resources.as_array_mut();
-    ensure!(!resources_option.is_none(), DatapackageMergeSnafu {message: "Datapackages need a `resources` key as an array"});
+    ensure!(resources_option.is_some(), DatapackageMergeSnafu {message: "Datapackages need a `resources` key as an array"});
 
     let mut new_resources = serde_json::Map::new();
     for resource in resources_option.unwrap().drain(..) {
         let path;
         {
             let path_str = resource["path"].as_str();
-            ensure!(!path_str.is_none(), DatapackageMergeSnafu{message: "datapackage resource needs a name or path"});
+            ensure!(path_str.is_some(), DatapackageMergeSnafu{message: "datapackage resource needs a name or path"});
             path = path_str.unwrap().to_owned();
         }
 
@@ -94,26 +97,26 @@ fn make_resource_from_mergable(mut resource: Value) -> Result<Value, Error>{
 
     resource["schema"].as_object_mut().unwrap().insert("fields".to_string(), new_fields.into());
 
-    return Ok(resource)
+    Ok(resource)
 }
 
 
 fn datapackage_json_to_value (filename: &str) -> Result<Value, Error> {
     if filename.ends_with(".json") {
-        let file = File::open(&filename).context(IoSnafu {filename: filename})?;
-        let json: Value = serde_json::from_reader(BufReader::new(file)).context(JSONSnafu{filename: filename})?;
+        let file = File::open(&filename).context(IoSnafu {filename})?;
+        let json: Value = serde_json::from_reader(BufReader::new(file)).context(JSONSnafu{filename})?;
         Ok(json)
     } else if filename.ends_with(".zip") {
-        let file = File::open(&filename).context(IoSnafu {filename: filename})?;
-        let mut zip = zip::ZipArchive::new(file).context(ZipSnafu {filename: filename})?;
-        let zipped_file = zip.by_name("datapackage.json").context(ZipSnafu {filename: filename})?;
-        let json: Value = serde_json::from_reader(BufReader::new(zipped_file)).context(JSONSnafu{filename: filename})?;
+        let file = File::open(&filename).context(IoSnafu {filename})?;
+        let mut zip = zip::ZipArchive::new(file).context(ZipSnafu {filename})?;
+        let zipped_file = zip.by_name("datapackage.json").context(ZipSnafu {filename})?;
+        let json: Value = serde_json::from_reader(BufReader::new(zipped_file)).context(JSONSnafu{filename})?;
         Ok(json)
     } else if PathBuf::from(filename).is_dir() {
         let mut path = PathBuf::from(filename);
         path.push("datapackage.json");
-        let file = File::open(path).context(IoSnafu {filename: filename})?;
-        let json: Value = serde_json::from_reader(BufReader::new(file)).context(JSONSnafu{filename: filename})?;
+        let file = File::open(path).context(IoSnafu {filename})?;
+        let json: Value = serde_json::from_reader(BufReader::new(file)).context(JSONSnafu{filename})?;
         Ok(json)
     } else {
         Err(Error::DatapackageMergeError {message: "could not detect a datapackage".into()})
@@ -170,7 +173,7 @@ pub fn merge_datapackage_jsons(datapackages: Vec<String>) -> Result<Value, Error
         merged_value = merge_datapackage_json(merged_value, make_mergeable_datapackage(datapackage_json_to_value(file)?)?)?;
     }
 
-    Ok(make_datapackage_from_mergeable(merged_value)?)
+    make_datapackage_from_mergeable(merged_value)
 }
 
 
@@ -178,7 +181,7 @@ pub fn write_merged_csv(
     csv_reader: csv::Reader<impl std::io::Read>, 
     mut csv_writer: Writer<File>,
     resource_fields: &std::collections::HashMap<String, usize>,
-    output_fields: &Vec<String>
+    output_fields: &[String]
 ) -> Result<Writer<File>, Error> {
     let output_map: Vec<Option<&usize>> = output_fields.iter().map(|field| {resource_fields.get(field)}).collect();
     let output_map_len = output_map.len();
@@ -229,11 +232,10 @@ pub fn merge_datapackage(datapackages: Vec<String>, output_path: PathBuf) -> Res
 
         let mut full_path = path.join(&resource_path);
         full_path.pop();
-        println!("{full_path:?}");
         std::fs::create_dir_all(&full_path).context(IoSnafu {filename: full_path.to_string_lossy()})?;
 
-        let mut writer = Writer::from_path(path.join(&resource_path)).unwrap();
-        writer.write_record(fields.clone()).unwrap(); //proper error
+        let mut writer = Writer::from_path(path.join(&resource_path)).context(CSVSnafu {filename: &resource_path})?;
+        writer.write_record(fields.clone()).context(CSVSnafu {filename: &resource_path})?;
         csv_outputs.insert(resource_path.clone(), writer);
 
         output_fields.insert(resource_path.clone(), fields);
