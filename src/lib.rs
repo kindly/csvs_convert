@@ -1,6 +1,9 @@
+mod zip_dir;
+
 use snafu::{Snafu, ensure};
 use snafu::prelude::*;
 use serde_json::Value;
+use tempfile::TempDir;
 use std::fs::File;
 use std::path::PathBuf;
 use std::io::BufReader;
@@ -18,11 +21,14 @@ pub enum Error {
     #[snafu(display("Error parsing JSON {}: {}", filename, source))]
     JSONError { source: serde_json::Error, filename: String },
 
-    #[snafu(display("Error loading zip file {}: {}", filename, source))]
+    #[snafu(display("Error loading ZIP file {}: {}", filename, source))]
     ZipError { source: zip::result::ZipError, filename: String },
 
-    #[snafu(display("Error loading zip file {}: {}", filename, source))]
-    CSVError { source: csv::Error, filename: String }
+    #[snafu(display("Error loading CSV file {}: {}", filename, source))]
+    CSVError { source: csv::Error, filename: String },
+
+    #[snafu(display("Could not write row: {}", source))]
+    CSVRowError { source: csv::Error }
 }
 
 fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error>{
@@ -177,32 +183,50 @@ pub fn merge_datapackage_jsons(datapackages: Vec<String>) -> Result<Value, Error
 }
 
 
-pub fn write_merged_csv(
+fn write_merged_csv(
     csv_reader: csv::Reader<impl std::io::Read>, 
     mut csv_writer: Writer<File>,
     resource_fields: &std::collections::HashMap<String, usize>,
     output_fields: &[String]
 ) -> Result<Writer<File>, Error> {
-    let output_map: Vec<Option<&usize>> = output_fields.iter().map(|field| {resource_fields.get(field)}).collect();
+    let output_map: Vec<Option<usize>> = output_fields.iter().map(|field| {
+        match resource_fields.get(field) {
+            Some(field) => Some(*field),
+            None => None,
+        }
+    }).collect();
     let output_map_len = output_map.len();
     for row in csv_reader.into_records() {
         let mut output_row = Vec::with_capacity(output_map_len);
-        let row = row.unwrap();
+        let row = row.context(CSVRowSnafu {})?;
         for item in &output_map {
             match item {
-                Some(index) => {output_row.push(row.get(**index).unwrap())},
+                Some(index) => {output_row.push(row.get(*index).unwrap())},
                 None => {output_row.push("")}
             }
         }
-        csv_writer.write_record(output_row).unwrap();
+        csv_writer.write_record(output_row).context(CSVRowSnafu {})?;
     }
     Ok(csv_writer)
 }
 
 
-pub fn merge_datapackage(datapackages: Vec<String>, output_path: PathBuf) -> Result<(), Error> {
+pub fn merge_datapackage(datapackages: Vec<String>, mut output_path: PathBuf) -> Result<(), Error> {
     ensure!(datapackages.len() > 1, DatapackageMergeSnafu {message: "Need more 2 or more files"});
-    
+
+    let original_path = output_path.clone();
+
+    let mut tmpdir_option= None;
+
+    if let Some(extension) = output_path.extension() {
+        if extension == "zip" {
+            output_path.pop();
+            let tmpdir = TempDir::new_in(&output_path).context(IoSnafu {filename: output_path.to_string_lossy()})?;
+            output_path = tmpdir.path().to_owned();
+            tmpdir_option = Some(tmpdir)
+        }
+    }
+
     std::fs::create_dir_all(&output_path).context(IoSnafu {filename: output_path.to_string_lossy()})?;
 
     let mut merged_datapackage_json = merge_datapackage_jsons(datapackages.clone())?;
@@ -260,25 +284,33 @@ pub fn merge_datapackage(datapackages: Vec<String>, output_path: PathBuf) -> Res
                 let mut file_pathbuf = PathBuf::from(file);
                 file_pathbuf.pop();
                 file_pathbuf.push(&resource_path);
-                let csv_reader = csv::Reader::from_path(file_pathbuf).unwrap();
-                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields).unwrap();
+                let csv_reader = csv::Reader::from_path(&file_pathbuf).context(CSVSnafu {filename: file_pathbuf.to_string_lossy()})?;
+                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
             } else if file.ends_with(".zip") {
                 let zip_file = File::open(&file).context(IoSnafu {filename: file})?;
                 let mut zip = zip::ZipArchive::new(zip_file).context(ZipSnafu {filename: file})?;
                 let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {filename: file})?;
                 let csv_reader = csv::Reader::from_reader(zipped_file);
-                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields).unwrap();
+                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
             } else if PathBuf::from(file).is_dir() {
                 let path = PathBuf::from(file);
                 let path = path.join(&resource_path);
-                let csv_reader = csv::Reader::from_reader(File::open(path).unwrap());
-                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields).unwrap();
+                let csv_reader = csv::Reader::from_reader(File::open(&path).context(IoSnafu {filename: path.to_string_lossy()})?);
+                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
             } else {
                 return Err(Error::DatapackageMergeError {message: "could not detect a datapackage".into()})
             }
 
             csv_outputs.insert(resource_path, csv_output);
         }
+    }
+
+    for (name, csv_file) in csv_outputs.iter_mut() {
+        csv_file.flush().context(IoSnafu {filename: name})?;
+    }
+
+    if tmpdir_option.is_some() {
+        zip_dir::zip_dir(&output_path, &original_path).context(ZipSnafu {filename: original_path.to_string_lossy()})?;
     }
 
     Ok(())
@@ -289,7 +321,6 @@ pub fn merge_datapackage(datapackages: Vec<String>, output_path: PathBuf) -> Res
 mod tests {
     use super::*;
     use insta;
-    use tempfile::TempDir;
     use std::io::BufRead;
 
     fn test_merged_csv_output(tmp: &PathBuf, name: String) {
@@ -303,7 +334,6 @@ mod tests {
             let lines: Vec<String> = std::io::BufReader::new(file).lines().map(|x| x.unwrap()).collect();
             insta::assert_yaml_snapshot!(test_name, lines);
         }
-
     }
 
     fn test_datapackage_merge(name: &str, datapackage1: &str, datapackage2: &str) {
