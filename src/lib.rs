@@ -8,6 +8,9 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::io::BufReader;
 use csv::Writer;
+use std::collections::HashMap;
+use rusqlite::Connection;
+use minijinja::Environment;
 
 #[non_exhaustive]
 #[derive(Debug, Snafu)]
@@ -28,7 +31,13 @@ pub enum Error {
     CSVError { source: csv::Error, filename: String },
 
     #[snafu(display("Could not write row: {}", source))]
-    CSVRowError { source: csv::Error }
+    CSVRowError { source: csv::Error },
+
+    #[snafu(display("{}", source))]
+    RusqliteError { source: rusqlite::Error },
+
+    #[snafu(display("{}", source))]
+    JinjaError { source: minijinja::Error },
 }
 
 fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error>{
@@ -105,7 +114,6 @@ fn make_resource_from_mergable(mut resource: Value) -> Result<Value, Error>{
 
     Ok(resource)
 }
-
 
 fn datapackage_json_to_value (filename: &str) -> Result<Value, Error> {
     if filename.ends_with(".json") {
@@ -186,7 +194,7 @@ pub fn merge_datapackage_jsons(datapackages: Vec<String>) -> Result<Value, Error
 fn write_merged_csv(
     csv_reader: csv::Reader<impl std::io::Read>, 
     mut csv_writer: Writer<File>,
-    resource_fields: &std::collections::HashMap<String, usize>,
+    resource_fields: &HashMap<String, usize>,
     output_fields: &[String]
 ) -> Result<Writer<File>, Error> {
     let output_map: Vec<Option<usize>> = output_fields.iter().map(|field| {
@@ -210,8 +218,33 @@ fn write_merged_csv(
     Ok(csv_writer)
 }
 
+enum CSVReaders {
+    File(csv::Reader<File>),
+    Zip(zip::ZipArchive<File>),
+}
 
-pub fn merge_datapackage(datapackages: Vec<String>, mut output_path: PathBuf) -> Result<(), Error> {
+fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error>{
+
+    if file.ends_with(".json") {
+        let mut file_pathbuf = PathBuf::from(file);
+        file_pathbuf.pop();
+        file_pathbuf.push(&resource_path);
+        Ok(CSVReaders::File(csv::Reader::from_path(&file_pathbuf).context(CSVSnafu {filename: file_pathbuf.to_string_lossy()})?))
+    } else if file.ends_with(".zip") {
+        let zip_file = File::open(&file).context(IoSnafu {filename: file.clone()})?;
+        let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu {filename: file.clone()})?;
+        Ok(CSVReaders::Zip(zip))
+    } else if PathBuf::from(&file).is_dir() {
+        let path = PathBuf::from(file);
+        let path = path.join(&resource_path);
+        Ok(CSVReaders::File(csv::Reader::from_reader(File::open(&path).context(IoSnafu {filename: path.to_string_lossy()})?)))
+    } else {
+        Err(Error::DatapackageMergeError {message: "could not detect a datapackage".into()})
+    }
+}
+
+
+pub fn merge_datapackage(mut output_path: PathBuf, datapackages: Vec<String>) -> Result<(), Error> {
     ensure!(datapackages.len() > 1, DatapackageMergeSnafu {message: "Need more 2 or more files"});
 
     let original_path = output_path.clone();
@@ -239,8 +272,8 @@ pub fn merge_datapackage(datapackages: Vec<String>, mut output_path: PathBuf) ->
 
     serde_json::to_writer_pretty(writer, &merged_datapackage_json).context(JSONSnafu {filename: datapackage_json_path_buf.to_string_lossy()})?;
 
-    let mut csv_outputs = std::collections::HashMap::new();
-    let mut output_fields = std::collections::HashMap::new();
+    let mut csv_outputs = HashMap::new();
+    let mut output_fields = HashMap::new();
 
     for resource in merged_datapackage_json["resources"].as_array_mut().unwrap() {
 
@@ -270,7 +303,7 @@ pub fn merge_datapackage(datapackages: Vec<String>, mut output_path: PathBuf) ->
     for file in datapackages.iter() {
         let mut datapackage_json = datapackage_json_to_value(file)?;
         for resource in datapackage_json["resources"].as_array_mut().unwrap() {
-            let mut resource_fields = std::collections::HashMap::new();
+            let mut resource_fields = HashMap::new();
             for (num, field) in resource["schema"]["fields"].as_array().unwrap().iter().enumerate() {
                 resource_fields.insert(field["name"].as_str().unwrap().to_owned(), num);
             }
@@ -280,25 +313,17 @@ pub fn merge_datapackage(datapackages: Vec<String>, mut output_path: PathBuf) ->
 
             let output_fields = output_fields.get_mut(&resource_path).unwrap();
 
-            if file.ends_with(".json") {
-                let mut file_pathbuf = PathBuf::from(file);
-                file_pathbuf.pop();
-                file_pathbuf.push(&resource_path);
-                let csv_reader = csv::Reader::from_path(&file_pathbuf).context(CSVSnafu {filename: file_pathbuf.to_string_lossy()})?;
-                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
-            } else if file.ends_with(".zip") {
-                let zip_file = File::open(&file).context(IoSnafu {filename: file})?;
-                let mut zip = zip::ZipArchive::new(zip_file).context(ZipSnafu {filename: file})?;
-                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {filename: file})?;
-                let csv_reader = csv::Reader::from_reader(zipped_file);
-                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
-            } else if PathBuf::from(file).is_dir() {
-                let path = PathBuf::from(file);
-                let path = path.join(&resource_path);
-                let csv_reader = csv::Reader::from_reader(File::open(&path).context(IoSnafu {filename: path.to_string_lossy()})?);
-                csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
-            } else {
-                return Err(Error::DatapackageMergeError {message: "could not detect a datapackage".into()})
+            let csv_readers = get_csv_reader(file, &resource_path)?;
+
+            match csv_readers {
+                CSVReaders::Zip(mut zip) => {
+                    let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {filename: file})?;
+                    let csv_reader = csv::Reader::from_reader(zipped_file);
+                    csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
+                },
+                CSVReaders::File(csv_reader) => {
+                    csv_output = write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
+                }
             }
 
             csv_outputs.insert(resource_path, csv_output);
@@ -311,6 +336,183 @@ pub fn merge_datapackage(datapackages: Vec<String>, mut output_path: PathBuf) ->
 
     if tmpdir_option.is_some() {
         zip_dir::zip_dir(&output_path, &original_path).context(ZipSnafu {filename: original_path.to_string_lossy()})?;
+    }
+
+    Ok(())
+}
+
+pub fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, minijinja::Error> {
+
+    let output = match value.as_str() {
+        "string" => "TEXT".to_string(),
+        "date" => "TIMESTAMP".to_string(),
+        "number" => "NUMERIC".to_string(),
+        "boolean" => "BOOLEAN".to_string(),
+        _ => "TEXT".to_string()
+    };
+    Ok(output)
+}
+
+fn render_sqlite_table(value: Value) -> Result<String, Error> {
+    let sqlite_table = r#"
+    CREATE TABLE [{{name}}] (
+        {% for field in schema.fields %}
+           {% if not loop.first %}, {% endif %}[{{field.name}}] {{field.type | sqlite_type}} #nl
+        {% endfor %}
+        {% if schema.primaryKey is string %}
+           , PRIMARY KEY ([{{schema.primaryKey}}]) #nl
+        {% endif %}
+        {% if schema.primaryKey is sequence %}
+           , PRIMARY KEY ([{{schema.primaryKey | join("],[")}}]) #nl
+        {% endif %}
+        {% if schema.foreignKeys is sequence %}
+           {% for foreignKey in schema.foreignKeys %}
+              {% if foreignKey.fields is string %}
+                , FOREIGN KEY ([{{foreignKey.fields}}]) REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields}}]) #nl
+              {% endif %}
+              {% if foreignKey.fields is sequence %}
+                , FOREIGN KEY ([{{foreignKey.fields | join("],[")}}]) 
+                  REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields | join("],[")}}]) #nl
+              {% endif %}
+           {% endfor %}
+        {% endif %}
+    ); #nl
+
+    {% if schema.foreignKeys is sequence %}
+        {% for foreignKey in schema.foreignKeys %}
+            {% if foreignKey.fields is string %}
+              CREATE INDEX [idx_{{name}}_{{foreignKey.fields}}] ON [{{name}}] ([{{foreignKey.fields}}]); #nl
+            {% endif %}
+            {% if foreignKey.fields is sequence %}
+              CREATE INDEX [idx_{{name}}_{{foreignKey.fields | join("_")}}] ON [{{name}}] ([{{foreignKey.fields | join("],[")}}]); #nl
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+
+    "#;
+    let sqlite_table = sqlite_table.replace("  ", "");
+    let sqlite_table = sqlite_table.replace("\n", "");
+    let sqlite_table = sqlite_table.replace("#nl", "\n");
+
+    let mut env = Environment::new();
+    env.add_filter("sqlite_type", to_sqlite_type);
+    env.add_template("sqlite_resource", &sqlite_table).unwrap();
+    let tmpl = env.get_template("sqlite_resource").unwrap();
+    Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
+}
+
+
+fn insert_sql_data(
+    csv_reader: csv::Reader<impl std::io::Read>, 
+    mut conn: rusqlite::Connection,
+    resource: Value
+) -> Result<rusqlite::Connection, Error> {
+    let tx = conn.transaction().context(RusqliteSnafu {})?;
+
+    let table = resource["name"].as_str().unwrap();
+
+    println!("{table}");
+
+    let mut fields = 0;
+
+    if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
+        fields = fields_vec.len();
+    };
+
+    let mut question_marks = "?,".repeat(fields);
+
+    question_marks.pop();
+
+    {
+        let mut statement = tx
+            .prepare_cached(&format!(
+                "INSERT INTO [{table}] VALUES ({question_marks})"
+            ))
+            .context(RusqliteSnafu {})?;
+
+        for row in csv_reader.into_deserialize() {
+            let this_row: Vec<String> = row.context(CSVSnafu {
+                filename: table
+            })?;
+
+            statement
+                .execute(rusqlite::params_from_iter(this_row.iter()))
+                .context(RusqliteSnafu {})?;
+        }
+    }
+    tx.commit().context(RusqliteSnafu {})?;
+    return Ok(conn)
+
+}
+
+pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(), Error> {
+    let mut datapackage_value = datapackage_json_to_value(&datapackage)?;
+
+    let resources_option = datapackage_value["resources"].as_array_mut();
+    ensure!(resources_option.is_some(), DatapackageMergeSnafu {message: "Datapackages need a `resources` key as an array"});
+
+    let mut table_links = Vec::new();
+    let mut table_to_schema = HashMap::new();
+
+    for resource in resources_option.unwrap().drain(..) {
+        if let Some(name) = resource["name"].as_str() {
+            if let Some(foreign_keys) = resource["schema"]["foreignKeys"].as_array() {
+                for value in foreign_keys {
+                    if let Some(foreign_key_table) = value["reference"]["resource"].as_str() {
+                        table_links.push((foreign_key_table.to_owned(), name.to_owned()));
+                    }
+                }
+            }
+            table_links.push((name.to_owned(), name.to_owned()));
+            table_to_schema.insert(name.to_owned(), resource.clone());
+        }
+    };
+
+    let mut relationhip_graph = petgraph::graphmap::DiGraphMap::new();
+
+    for (x, y) in table_links.iter() {
+        relationhip_graph.add_edge(y, x, 1);
+    }
+
+    let ordered_tables = petgraph::algo::kosaraju_scc(&relationhip_graph);
+
+    let mut conn = Connection::open(db_path).context(RusqliteSnafu {})?;
+
+    conn.execute_batch(
+        "PRAGMA journal_mode = OFF;
+         PRAGMA synchronous = 0;
+         PRAGMA locking_mode = EXCLUSIVE;
+         PRAGMA temp_store = MEMORY;",
+    )
+    .context(RusqliteSnafu {})?;
+
+    for tables in ordered_tables {
+        for table in tables {
+
+            let resource = table_to_schema.get(table).unwrap();
+
+            let resource_sqlite = render_sqlite_table(resource.clone())?;
+
+            conn.execute(&resource_sqlite, []).context(RusqliteSnafu {})?;
+
+            ensure!(resource["path"].is_string(), DatapackageMergeSnafu {message: "Datapackages resources need a `path`"});
+
+            let resource_path = resource["path"].as_str().unwrap();
+
+            let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+
+            match csv_readers {
+                CSVReaders::Zip(mut zip) => {
+                    let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {filename: &datapackage})?;
+                    let csv_reader = csv::Reader::from_reader(zipped_file);
+                    conn = insert_sql_data(csv_reader, conn, resource.clone())?
+                },
+                CSVReaders::File(csv_reader) => {
+                    conn = insert_sql_data(csv_reader, conn, resource.clone())?
+                }
+            }
+
+        }
     }
 
     Ok(())
@@ -342,8 +544,8 @@ mod tests {
             let tmp = tmp_dir.path().to_owned();
 
             merge_datapackage(
+                    tmp.clone(),
                     vec![format!("fixtures/{datapackage1}/datapackage.json"), format!("fixtures/{datapackage2}/datapackage.json")],
-                    tmp.clone()
             ).unwrap();
 
             insta::assert_yaml_snapshot!(format!("{name}_json"),
@@ -357,8 +559,8 @@ mod tests {
             let tmp = temp_dir.path().to_path_buf();
 
             merge_datapackage(
+                    tmp.clone(),
                     vec![format!("fixtures/{datapackage1}"), format!("fixtures/{datapackage2}")],
-                    tmp.clone()
             ).unwrap();
 
             insta::assert_yaml_snapshot!(format!("{name}_folder"),
@@ -372,8 +574,8 @@ mod tests {
             let tmp = temp_dir.path().to_path_buf();
 
             merge_datapackage(
+                    tmp.clone(),
                     vec![format!("fixtures/{datapackage1}.zip"), format!("fixtures/{datapackage2}.zip")],
-                    tmp.clone()
             ).unwrap();
 
             insta::assert_yaml_snapshot!(format!("{name}_zip"),
