@@ -7,11 +7,10 @@ use std::fs::File;
 use std::path::Path;
 use walkdir::{DirEntry, WalkDir};
 
-
 fn zip_iterator<T>(
     it: &mut dyn Iterator<Item = DirEntry>,
     prefix: &Path,
-    writer: T
+    writer: T,
 ) -> zip::result::ZipResult<()>
 where
     T: Write + Seek,
@@ -23,9 +22,9 @@ where
 
     for entry in it {
         let path = entry.path();
-        let name = path.strip_prefix(
-            Path::new(prefix)
-        ).map_err(|_| {zip::result::ZipError::InvalidArchive("Could not strip prefix")})?;
+        let name = path
+            .strip_prefix(Path::new(prefix))
+            .map_err(|_| zip::result::ZipError::InvalidArchive("Could not strip prefix"))?;
 
         if path.is_file() {
             zip.start_file(name.to_string_lossy(), options)?;
@@ -39,10 +38,7 @@ where
     Result::Ok(())
 }
 
-pub fn zip_dir(
-    src_dir: &Path,
-    dst_file: &Path,
-) -> zip::result::ZipResult<()> {
+pub fn zip_dir(src_dir: &Path, dst_file: &Path) -> zip::result::ZipResult<()> {
     if !Path::new(src_dir).is_dir() {
         return Err(ZipError::FileNotFound);
     }
