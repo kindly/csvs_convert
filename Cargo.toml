@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 licence = "MIT"
 
+description = "Some Datapackage Conversion"
+license = "MIT"
+repository = "https://github.com/kindly/datapackage_convert"
+homepage = "https://github.com/kindly/datapackage_convert"
+
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
