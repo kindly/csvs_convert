@@ -8,12 +8,12 @@ use snafu::prelude::*;
 use snafu::{ensure, Snafu};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Seek};
+use std::io::BufReader;
 use std::path::PathBuf;
-use tempfile::{tempfile_in, TempDir};
 use derive_builder::Builder;
+use tempfile::TempDir;
 
-use arrow::csv::ReaderBuilder;
+use arrow::csv::Reader;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use parquet::{
@@ -494,7 +494,7 @@ pub fn merge_datapackage_with_options(mut output_path: PathBuf, datapackages: Ve
     Ok(())
 }
 
-pub fn to_sqlite_type(
+fn to_sqlite_type(
     _state: &minijinja::State,
     value: String,
 ) -> Result<String, minijinja::Error> {
@@ -690,7 +690,7 @@ pub fn datapackage_to_sqlite_with_options(db_path: String, datapackage: String, 
 
 
 fn create_parquet(
-    file: impl std::io::Read + std::io::Seek,
+    file: impl std::io::Read,
     resource: Value,
     mut output_path: PathBuf,
 ) -> Result<(), Error> {
@@ -744,11 +744,16 @@ fn create_parquet(
         arrow_fields.push(field);
     }
 
-    let arrow_csv_reader = ReaderBuilder::new()
-        .with_schema(std::sync::Arc::new(Schema::new(arrow_fields)))
-        .has_header(true)
-        .build(file).context(ArrowSnafu {})?
-        ;
+    let arrow_csv_reader = Reader::new(
+        file, 
+        std::sync::Arc::new(Schema::new(arrow_fields)),
+        true,
+        None,
+        1024,
+        None,
+        None,
+        None
+    );
 
     let props = WriterProperties::builder()
         .set_dictionary_enabled(false)
@@ -804,19 +809,10 @@ pub fn datapackage_to_parquet_with_options(output_path: PathBuf, datapackage: St
 
         match csv_readers {
             CSVReaders::Zip(mut zip) => {
-                let mut zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let mut tmp_csv = tempfile_in(&output_path).context(IoSnafu {
-                    filename: output_path.to_string_lossy(),
-                })?;
-                std::io::copy(&mut zipped_file, &mut tmp_csv).context(IoSnafu {
-                    filename: output_path.to_string_lossy(),
-                })?;
-                tmp_csv.seek(std::io::SeekFrom::Start(0)).context(IoSnafu {
-                    filename: output_path.to_string_lossy(),
-                })?;
-                create_parquet(tmp_csv, resource.clone(), output_path.clone())?
+                create_parquet(zipped_file, resource.clone(), output_path.clone())?
             }
             CSVReaders::File(csv_reader) => {
                 let (filename, file) = csv_reader;
@@ -1011,7 +1007,7 @@ mod tests {
 
             let mut data = vec![];
             for row in reader {
-                for (idx, (name, field)) in row.get_column_iter().enumerate() {
+                for (_idx, (name, field)) in row.get_column_iter().enumerate() {
                     let field = match field {
                         parquet::record::Field::Str(string) => string.to_owned(),
                         other => other.to_string(),

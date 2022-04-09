@@ -2,7 +2,7 @@
 name = "datapackage_convert"
 version = "0.2.0"
 edition = "2021"
-licence = "MIT"
+lisence = "MIT"
 
 description = "Some Datapackage Conversion"
 license = "MIT"
