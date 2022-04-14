@@ -1,0 +1,10 @@
+---
+source: src/lib.rs
+assertion_line: 981
+expression: output
+---
+- - 1
+  - game1_add_resource
+- - 2
+  - game2_add_resource
+

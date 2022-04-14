@@ -17,7 +17,7 @@
               "count": 2
             }
           ],
-          "primaryKey": "_link"
+          "primaryKey": "id"
         },
         "path": "csv/games.csv"
       },
@@ -37,7 +37,7 @@
               "count": 2
             }
           ],
-          "primaryKey": "_link"
+          "primaryKey": "id"
         },
         "path": "csv/games2.csv"
       }

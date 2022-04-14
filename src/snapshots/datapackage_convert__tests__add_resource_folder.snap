@@ -1,7 +1,7 @@
 ---
 source: src/lib.rs
-assertion_line: 191
-expression: "merge_datapackage_json(vec![format! (\"fixtures/{datapackage1}\"), format!\n                            (\"fixtures/{datapackage2}\")]).unwrap()"
+assertion_line: 892
+expression: datapackage_json_to_value(&tmp.to_string_lossy().into_owned()).unwrap()
 ---
 profile: tabular-data-package
 resources:
@@ -27,6 +27,6 @@ resources:
         - name: title
           type: string
           count: 2
-      primaryKey: _link
+      primaryKey: id
     path: csv/games2.csv
 

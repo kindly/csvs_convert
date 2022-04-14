@@ -1,6 +1,6 @@
 [package]
 name = "datapackage_convert"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 licence = "MIT"
 
@@ -25,6 +25,7 @@ walkdir = "2.3.2"
 petgraph = "0.6.0"
 rusqlite = {version = "0.27.0", features = ["bundled"] }
 minijinja = "0.15.0"
+derive_builder = "0.11.1"
 
 [dev-dependencies]
 insta = { version = "1.14.0", features = ["redactions"] }

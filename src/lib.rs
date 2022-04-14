@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::{BufReader, Seek};
 use std::path::PathBuf;
 use tempfile::{tempfile_in, TempDir};
+use derive_builder::Builder;
 
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -65,6 +66,14 @@ pub enum Error {
     #[snafu(display("{}", source))]
     ArrowError { source: ArrowError },
 }
+
+
+#[derive(Default, Builder, Debug)]
+#[builder(setter(into))]
+pub struct Options {
+    pub delete_input_csv: bool
+}
+
 
 fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error> {
     let mut fields = resource["schema"]["fields"].take();
@@ -304,7 +313,7 @@ fn write_merged_csv(
 }
 
 enum CSVReaders {
-    File(File),
+    File((PathBuf, File)),
     Zip(zip::ZipArchive<File>),
 }
 
@@ -313,11 +322,11 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
         let mut file_pathbuf = PathBuf::from(file);
         file_pathbuf.pop();
         file_pathbuf.push(&resource_path);
-        Ok(CSVReaders::File(File::open(&file_pathbuf).context(
+        Ok(CSVReaders::File((file_pathbuf.clone(), File::open(&file_pathbuf).context(
             IoSnafu {
-                filename: file_pathbuf.to_string_lossy(),
-            },
-        )?))
+                filename: file_pathbuf.to_string_lossy()
+            }
+        )?)))
     } else if file.ends_with(".zip") {
         let zip_file = File::open(&file).context(IoSnafu {
             filename: file.clone(),
@@ -329,11 +338,11 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
     } else if PathBuf::from(&file).is_dir() {
         let file_pathbuf = PathBuf::from(file);
         let file_pathbuf = file_pathbuf.join(&resource_path);
-        Ok(CSVReaders::File(File::open(&file_pathbuf).context(
+        Ok(CSVReaders::File((file_pathbuf.clone(), File::open(&file_pathbuf).context(
             IoSnafu {
-                filename: file_pathbuf.to_string_lossy(),
-            },
-        )?))
+                filename: file_pathbuf.to_string_lossy()
+            }
+        )?)))
     } else {
         Err(Error::DatapackageMergeError {
             message: "could not detect a datapackage".into(),
@@ -341,7 +350,12 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
     }
 }
 
-pub fn merge_datapackage(mut output_path: PathBuf, datapackages: Vec<String>) -> Result<(), Error> {
+pub fn merge_datapackage(output_path: PathBuf, datapackages: Vec<String>) -> Result<(), Error> {
+    let options = Options::default();
+    merge_datapackage_with_options(output_path, datapackages, options)
+}
+
+pub fn merge_datapackage_with_options(mut output_path: PathBuf, datapackages: Vec<String>, options: Options) -> Result<(), Error> {
     ensure!(
         datapackages.len() > 1,
         DatapackageMergeSnafu {
@@ -452,10 +466,14 @@ pub fn merge_datapackage(mut output_path: PathBuf, datapackages: Vec<String>) ->
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                 }
-                CSVReaders::File(file) => {
-                    let csv_reader = csv::Reader::from_reader(file);
+                CSVReaders::File(file_reader) => {
+                    let (filename, file_reader) = file_reader;
+                    let csv_reader = csv::Reader::from_reader(file_reader);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
+                    if options.delete_input_csv {
+                        std::fs::remove_file(&filename).context(IoSnafu {filename: filename.to_string_lossy()})?;
+                    }
                 }
             }
 
@@ -574,7 +592,14 @@ fn insert_sql_data(
     return Ok(conn);
 }
 
+
 pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(), Error> {
+    let options = Options::default();
+    datapackage_to_sqlite_with_options(db_path, datapackage, options)
+}
+
+
+pub fn datapackage_to_sqlite_with_options(db_path: String, datapackage: String, options: Options) -> Result<(), Error> {
     let mut datapackage_value = datapackage_json_to_value(&datapackage)?;
 
     let resources_option = datapackage_value["resources"].as_array_mut();
@@ -648,9 +673,13 @@ pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(),
                     let csv_reader = csv::Reader::from_reader(zipped_file);
                     conn = insert_sql_data(csv_reader, conn, resource.clone())?
                 }
-                CSVReaders::File(file) => {
+                CSVReaders::File(csv_file) => {
+                    let (filename, file) = csv_file;
                     let csv_reader = csv::Reader::from_reader(file);
-                    conn = insert_sql_data(csv_reader, conn, resource.clone())?
+                    conn = insert_sql_data(csv_reader, conn, resource.clone())?;
+                    if options.delete_input_csv {
+                        std::fs::remove_file(&filename).context(IoSnafu {filename: filename.to_string_lossy()})?;
+                    }
                 }
             }
         }
@@ -658,6 +687,7 @@ pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(),
 
     Ok(())
 }
+
 
 fn create_parquet(
     file: impl std::io::Read + std::io::Seek,
@@ -672,8 +702,6 @@ fn create_parquet(
     );
 
     output_path.push(format!("{}.parquet", resource["name"].as_str().unwrap()));
-
-    println!("{}", resource["name"].as_str().unwrap());
 
     let mut arrow_fields = vec![];
 
@@ -719,8 +747,8 @@ fn create_parquet(
     let arrow_csv_reader = ReaderBuilder::new()
         .with_schema(std::sync::Arc::new(Schema::new(arrow_fields)))
         .has_header(true)
-        .build(file)
-        .unwrap();
+        .build(file).context(ArrowSnafu {})?
+        ;
 
     let props = WriterProperties::builder()
         .set_dictionary_enabled(false)
@@ -747,7 +775,14 @@ fn create_parquet(
     Ok(())
 }
 
+
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
+    let options = Options::default();
+    datapackage_to_parquet_with_options(output_path, datapackage, options)
+}
+
+
+pub fn datapackage_to_parquet_with_options(output_path: PathBuf, datapackage: String, options: Options) -> Result<(), Error> {
     std::fs::create_dir_all(&output_path).context(IoSnafu {
         filename: output_path.to_string_lossy(),
     })?;
@@ -783,7 +818,13 @@ pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Resu
                 })?;
                 create_parquet(tmp_csv, resource.clone(), output_path.clone())?
             }
-            CSVReaders::File(file) => create_parquet(file, resource.clone(), output_path.clone())?,
+            CSVReaders::File(csv_reader) => {
+                let (filename, file) = csv_reader;
+                create_parquet(file, resource.clone(), output_path.clone())?;
+                if options.delete_input_csv {
+                    std::fs::remove_file(&filename).context(IoSnafu {filename: filename.to_string_lossy()})?;
+                }
+            }
         }
     }
 
@@ -795,6 +836,7 @@ mod tests {
     use super::*;
     use insta;
     use std::io::BufRead;
+    use parquet::file::reader::SerializedFileReader;
 
     fn test_merged_csv_output(tmp: &PathBuf, name: String) {
         let csv_dir = tmp.join("csv");
@@ -904,12 +946,90 @@ mod tests {
     }
 
     #[test]
+    fn test_sqlite() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        let options = OptionsBuilder::default().delete_input_csv(true).build().unwrap();
+
+        std::fs::copy("fixtures/add_resource/datapackage.json", tmp.join("datapackage.json")).unwrap();
+        std::fs::create_dir_all(tmp.join("csv")).unwrap();
+        std::fs::copy("fixtures/add_resource/csv/games.csv", tmp.join("csv/games.csv")).unwrap();
+        std::fs::copy("fixtures/add_resource/csv/games2.csv", tmp.join("csv/games2.csv")).unwrap();
+
+        datapackage_to_sqlite_with_options(
+            tmp.join("sqlite.db").to_string_lossy().into(), 
+            tmp.to_string_lossy().into(), 
+            options).unwrap();
+        
+        assert!(tmp.join("sqlite.db").exists());
+        assert!(!tmp.join("csv/games.csv").exists());
+        assert!(!tmp.join("csv/games2.csv").exists());
+
+        let conn = Connection::open(tmp.join("sqlite.db")).unwrap();
+
+        for table in ["games", "games2"] {
+            let mut stmt = conn.prepare(&format!("select * from {}", table)).unwrap();
+            let mut rows = stmt.query([]).unwrap();
+
+            let mut output: Vec<(u64, String)> = vec![];
+            while let Some(row) = rows.next().unwrap() {
+                output.push((row.get(0).unwrap(), row.get(1).unwrap()));
+            }
+            insta::assert_yaml_snapshot!(output)
+        }
+
+    }
+
+    #[test]
+    fn test_parquet() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        let options = OptionsBuilder::default().delete_input_csv(true).build().unwrap();
+
+        std::fs::copy("fixtures/add_resource/datapackage.json", tmp.join("datapackage.json")).unwrap();
+        std::fs::create_dir_all(tmp.join("csv")).unwrap();
+        std::fs::copy("fixtures/add_resource/csv/games.csv", tmp.join("csv/games.csv")).unwrap();
+        std::fs::copy("fixtures/add_resource/csv/games2.csv", tmp.join("csv/games2.csv")).unwrap();
+
+        datapackage_to_parquet_with_options(
+            tmp.join("parquet"), 
+            tmp.to_string_lossy().into(), 
+            options).unwrap();
+        
+        assert!(tmp.join("parquet/games.parquet").exists());
+        assert!(tmp.join("parquet/games2.parquet").exists());
+        assert!(!tmp.join("csv/games.csv").exists());
+        assert!(!tmp.join("csv/games2.csv").exists());
+
+        let games1 = File::open(tmp.join("parquet/games.parquet")).unwrap();
+        let games2 = File::open(tmp.join("parquet/games2.parquet")).unwrap();
+
+        for file in [games1, games2] {
+            let reader = SerializedFileReader::new(file).unwrap();
+
+            let mut data = vec![];
+            for row in reader {
+                for (idx, (name, field)) in row.get_column_iter().enumerate() {
+                    let field = match field {
+                        parquet::record::Field::Str(string) => string.to_owned(),
+                        other => other.to_string(),
+                    };
+                    data.push((name.to_owned(), field));
+                }
+            }
+            insta::assert_yaml_snapshot!(data)
+        }
+    }
+
+    #[test]
     fn test_multiple() {
         insta::assert_yaml_snapshot!(merge_datapackage_jsons(vec![
             "fixtures/base_datapackage/datapackage.json".into(),
             "fixtures/base_datapackage/datapackage.json".into(),
-            "fixtures/add_resource/datapackage.json".into(),
             "fixtures/add_different_resource/datapackage.json".into(),
+            "fixtures/add_resource/datapackage.json".into(),
             "fixtures/add_field/datapackage.json".into(),
             "fixtures/conflict_types/datapackage.json".into()
         ])
