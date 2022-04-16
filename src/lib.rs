@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use derive_builder::Builder;
+use typed_builder::TypedBuilder;
 use tempfile::TempDir;
 
 use arrow::csv::Reader;
@@ -68,9 +68,9 @@ pub enum Error {
 }
 
 
-#[derive(Default, Builder, Debug)]
-#[builder(setter(into))]
+#[derive(Default, Debug, TypedBuilder)]
 pub struct Options {
+    #[builder(default)]
     pub delete_input_csv: bool
 }
 
@@ -855,12 +855,15 @@ mod tests {
             let tmp_dir = TempDir::new().unwrap();
             let tmp = tmp_dir.path().to_owned();
 
-            merge_datapackage(
+            let options = Options::builder().build();
+
+            merge_datapackage_with_options(
                 tmp.clone(),
                 vec![
                     format!("fixtures/{datapackage1}/datapackage.json"),
                     format!("fixtures/{datapackage2}/datapackage.json"),
                 ],
+                options
             )
             .unwrap();
 
@@ -946,7 +949,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
 
-        let options = OptionsBuilder::default().delete_input_csv(true).build().unwrap();
+        let options = Options::builder().delete_input_csv(true).build();
 
         std::fs::copy("fixtures/add_resource/datapackage.json", tmp.join("datapackage.json")).unwrap();
         std::fs::create_dir_all(tmp.join("csv")).unwrap();
@@ -982,7 +985,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
 
-        let options = OptionsBuilder::default().delete_input_csv(true).build().unwrap();
+        let options = Options::builder().delete_input_csv(true).build();
 
         std::fs::copy("fixtures/add_resource/datapackage.json", tmp.join("datapackage.json")).unwrap();
         std::fs::create_dir_all(tmp.join("csv")).unwrap();
