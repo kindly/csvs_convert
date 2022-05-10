@@ -1,5 +1,6 @@
 mod zip_dir;
 
+use csv::ReaderBuilder;
 use csv::Writer;
 use minijinja::Environment;
 use rusqlite::Connection;
@@ -10,8 +11,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use typed_builder::TypedBuilder;
 use tempfile::TempDir;
+use typed_builder::TypedBuilder;
+use xlsxwriter::Workbook;
 
 use arrow::csv::Reader;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -26,6 +28,9 @@ use parquet::{
 pub enum Error {
     #[snafu(display("{}", message))]
     DatapackageMergeError { message: String },
+
+    #[snafu(display("{}", message))]
+    DatapackageXLSXError { message: String },
 
     #[snafu(display("Error reading file {}: {}", filename, source))]
     IoError {
@@ -65,15 +70,28 @@ pub enum Error {
 
     #[snafu(display("{}", source))]
     ArrowError { source: ArrowError },
-}
 
+    #[snafu(display("Error with writing XLSX file"))]
+    XLSXError { source: xlsxwriter::XlsxError },
+}
 
 #[derive(Default, Debug, TypedBuilder)]
 pub struct Options {
     #[builder(default)]
-    pub delete_input_csv: bool
+    pub delete_input_csv: bool,
+    #[builder(default = "_".into())]
+    pub seperator: String,
+    #[builder(default)]
+    pub use_titles: bool,
 }
 
+lazy_static::lazy_static! {
+    #[allow(clippy::invalid_regex)]
+    pub static ref INVALID_REGEX: regex::Regex = regex::RegexBuilder::new(r"[\000-\010]|[\013-\014]|[\016-\037]")
+        .octal(true)
+        .build()
+        .unwrap();
+}
 
 fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error> {
     let mut fields = resource["schema"]["fields"].take();
@@ -322,11 +340,12 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
         let mut file_pathbuf = PathBuf::from(file);
         file_pathbuf.pop();
         file_pathbuf.push(&resource_path);
-        Ok(CSVReaders::File((file_pathbuf.clone(), File::open(&file_pathbuf).context(
-            IoSnafu {
-                filename: file_pathbuf.to_string_lossy()
-            }
-        )?)))
+        Ok(CSVReaders::File((
+            file_pathbuf.clone(),
+            File::open(&file_pathbuf).context(IoSnafu {
+                filename: file_pathbuf.to_string_lossy(),
+            })?,
+        )))
     } else if file.ends_with(".zip") {
         let zip_file = File::open(&file).context(IoSnafu {
             filename: file.clone(),
@@ -338,11 +357,12 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
     } else if PathBuf::from(&file).is_dir() {
         let file_pathbuf = PathBuf::from(file);
         let file_pathbuf = file_pathbuf.join(&resource_path);
-        Ok(CSVReaders::File((file_pathbuf.clone(), File::open(&file_pathbuf).context(
-            IoSnafu {
-                filename: file_pathbuf.to_string_lossy()
-            }
-        )?)))
+        Ok(CSVReaders::File((
+            file_pathbuf.clone(),
+            File::open(&file_pathbuf).context(IoSnafu {
+                filename: file_pathbuf.to_string_lossy(),
+            })?,
+        )))
     } else {
         Err(Error::DatapackageMergeError {
             message: "could not detect a datapackage".into(),
@@ -355,7 +375,11 @@ pub fn merge_datapackage(output_path: PathBuf, datapackages: Vec<String>) -> Res
     merge_datapackage_with_options(output_path, datapackages, options)
 }
 
-pub fn merge_datapackage_with_options(mut output_path: PathBuf, datapackages: Vec<String>, options: Options) -> Result<(), Error> {
+pub fn merge_datapackage_with_options(
+    mut output_path: PathBuf,
+    datapackages: Vec<String>,
+    options: Options,
+) -> Result<(), Error> {
     ensure!(
         datapackages.len() > 1,
         DatapackageMergeSnafu {
@@ -472,7 +496,9 @@ pub fn merge_datapackage_with_options(mut output_path: PathBuf, datapackages: Ve
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                     if options.delete_input_csv {
-                        std::fs::remove_file(&filename).context(IoSnafu {filename: filename.to_string_lossy()})?;
+                        std::fs::remove_file(&filename).context(IoSnafu {
+                            filename: filename.to_string_lossy(),
+                        })?;
                     }
                 }
             }
@@ -494,10 +520,7 @@ pub fn merge_datapackage_with_options(mut output_path: PathBuf, datapackages: Ve
     Ok(())
 }
 
-fn to_sqlite_type(
-    _state: &minijinja::State,
-    value: String,
-) -> Result<String, minijinja::Error> {
+fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, minijinja::Error> {
     let output = match value.as_str() {
         "string" => "TEXT".to_string(),
         "date" => "TIMESTAMP".to_string(),
@@ -592,14 +615,16 @@ fn insert_sql_data(
     return Ok(conn);
 }
 
-
 pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(), Error> {
     let options = Options::default();
     datapackage_to_sqlite_with_options(db_path, datapackage, options)
 }
 
-
-pub fn datapackage_to_sqlite_with_options(db_path: String, datapackage: String, options: Options) -> Result<(), Error> {
+pub fn datapackage_to_sqlite_with_options(
+    db_path: String,
+    datapackage: String,
+    options: Options,
+) -> Result<(), Error> {
     let mut datapackage_value = datapackage_json_to_value(&datapackage)?;
 
     let resources_option = datapackage_value["resources"].as_array_mut();
@@ -678,7 +703,9 @@ pub fn datapackage_to_sqlite_with_options(db_path: String, datapackage: String, 
                     let csv_reader = csv::Reader::from_reader(file);
                     conn = insert_sql_data(csv_reader, conn, resource.clone())?;
                     if options.delete_input_csv {
-                        std::fs::remove_file(&filename).context(IoSnafu {filename: filename.to_string_lossy()})?;
+                        std::fs::remove_file(&filename).context(IoSnafu {
+                            filename: filename.to_string_lossy(),
+                        })?;
                     }
                 }
             }
@@ -687,7 +714,6 @@ pub fn datapackage_to_sqlite_with_options(db_path: String, datapackage: String, 
 
     Ok(())
 }
-
 
 fn create_parquet(
     file: impl std::io::Read,
@@ -745,14 +771,14 @@ fn create_parquet(
     }
 
     let arrow_csv_reader = Reader::new(
-        file, 
+        file,
         std::sync::Arc::new(Schema::new(arrow_fields)),
         true,
         None,
         1024,
         None,
         None,
-        None
+        None,
     );
 
     let props = WriterProperties::builder()
@@ -780,14 +806,16 @@ fn create_parquet(
     Ok(())
 }
 
-
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
     let options = Options::default();
     datapackage_to_parquet_with_options(output_path, datapackage, options)
 }
 
-
-pub fn datapackage_to_parquet_with_options(output_path: PathBuf, datapackage: String, options: Options) -> Result<(), Error> {
+pub fn datapackage_to_parquet_with_options(
+    output_path: PathBuf,
+    datapackage: String,
+    options: Options,
+) -> Result<(), Error> {
     std::fs::create_dir_all(&output_path).context(IoSnafu {
         filename: output_path.to_string_lossy(),
     })?;
@@ -818,8 +846,206 @@ pub fn datapackage_to_parquet_with_options(output_path: PathBuf, datapackage: St
                 let (filename, file) = csv_reader;
                 create_parquet(file, resource.clone(), output_path.clone())?;
                 if options.delete_input_csv {
-                    std::fs::remove_file(&filename).context(IoSnafu {filename: filename.to_string_lossy()})?;
+                    std::fs::remove_file(&filename).context(IoSnafu {
+                        filename: filename.to_string_lossy(),
+                    })?;
                 }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn truncate_xlsx_title(mut title: String, seperator: &str) -> String {
+    let parts: Vec<&str> = title.split(seperator).collect();
+    if parts.len() == 1 || title.len() <= 31 {
+        title.truncate(31);
+        return title;
+    }
+
+    let mut last_part = parts.last().unwrap().to_string();
+
+    let length_of_last_part = parts.last().unwrap().len();
+
+    let rest = 31 - std::cmp::min(length_of_last_part, 31);
+
+    let max_len_of_part_with_sep = rest / (parts.len() - 1);
+
+    let len_of_part =
+        max_len_of_part_with_sep - std::cmp::min(max_len_of_part_with_sep, seperator.len());
+
+    if len_of_part < 1 {
+        last_part.truncate(31);
+        return last_part;
+    }
+    let mut new_parts: Vec<String> = vec![];
+    for part in parts[..parts.len() - 1].iter() {
+        let end_new_part = std::cmp::min(len_of_part, part.len());
+        let new_part = part[..end_new_part].to_string();
+        new_parts.push(new_part);
+    }
+    new_parts.push(last_part);
+
+    new_parts.join(seperator)
+}
+
+fn create_sheet(
+    csv_reader: csv::Reader<impl std::io::Read>,
+    resource: Value,
+    workbook: &mut Workbook,
+    options: &Options,
+) -> Result<(), Error> {
+    let bold = workbook.add_format().set_bold();
+
+    let mut field_types = vec![];
+    if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
+        for value in fields_vec {
+            if let Some(field_type) = value["type"].as_str() {
+                field_types.push(field_type.to_owned());
+            }
+        }
+    };
+
+    ensure!(
+        field_types.len() < 65536,
+        DatapackageXLSXSnafu {
+            message: "Too many columns for XLSX file"
+        }
+    );
+
+    let mut title = String::new();
+
+    if let Some(t) = resource["name"].as_str() {
+        title = t.into()
+    };
+
+    if let Some(t) = resource["title"].as_str() {
+        if options.use_titles {
+            title = t.into()
+        }
+    }
+
+    ensure!(
+        !title.is_empty(),
+        DatapackageXLSXSnafu {
+            message: "A data resource either needs a name or title."
+        }
+    );
+
+    let new_title = truncate_xlsx_title(title.clone(), &options.seperator);
+
+    let mut worksheet = workbook
+        .add_worksheet(Some(&new_title))
+        .context(XLSXSnafu {})?;
+
+    for (row_num, row) in csv_reader.into_records().enumerate() {
+        let this_row = row.context(CSVSnafu { filename: &title })?;
+
+        let mut format = None;
+
+        ensure!(
+            row_num < 1048575,
+            DatapackageXLSXSnafu {
+                message: "Number of rows is too large for XLSX file"
+            }
+        );
+
+        if row_num == 0 {
+            ensure!(
+                this_row.len() == field_types.len(),
+                DatapackageXLSXSnafu {
+                    message: "Number of fields in datapackage needs to match CSV fields."
+                }
+            );
+            format = Some(&bold);
+        }
+
+        for (col_index, value) in this_row.iter().enumerate() {
+            let mut cell = value.to_string();
+
+            if field_types[col_index] == "number" {
+                if let Ok(number) = value.parse::<f64>() {
+                    worksheet
+                        .write_number(
+                            row_num.try_into().unwrap(),
+                            col_index.try_into().unwrap(),
+                            number,
+                            format,
+                        )
+                        .context(XLSXSnafu {})?;
+                    continue;
+                }
+            }
+
+            if INVALID_REGEX.is_match(&cell) {
+                cell = INVALID_REGEX.replace_all(&cell, "").to_string();
+            }
+
+            worksheet
+                .write_string(
+                    row_num.try_into().unwrap(),
+                    col_index.try_into().unwrap(),
+                    &cell,
+                    format,
+                )
+                .context(XLSXSnafu {})?;
+        }
+    }
+    Ok(())
+}
+
+pub fn datapackage_to_xlsx(xlsx_path: String, datapackage: String) -> Result<(), Error> {
+    let options = Options::default();
+    datapackage_to_xlsx_with_options(xlsx_path, datapackage, options)
+}
+
+pub fn datapackage_to_xlsx_with_options(
+    xlsx_path: String,
+    datapackage: String,
+    options: Options,
+) -> Result<(), Error> {
+    let mut datapackage_value = datapackage_json_to_value(&datapackage)?;
+
+    let resources_option = datapackage_value["resources"].as_array_mut();
+    ensure!(
+        resources_option.is_some(),
+        DatapackageMergeSnafu {
+            message: "Datapackages need a `resources` key as an array"
+        }
+    );
+
+    let mut pathbuf = PathBuf::from(&xlsx_path);
+    pathbuf.pop();
+
+    let mut workbook =
+        Workbook::new_with_options(&xlsx_path, true, Some(&pathbuf.to_string_lossy()), false);
+
+    for resource in resources_option.unwrap() {
+        let resource_path = resource["path"].as_str().unwrap();
+
+        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+
+        match csv_readers {
+            CSVReaders::Zip(mut zip) => {
+                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                    filename: &datapackage,
+                })?;
+                let csv_reader = ReaderBuilder::new()
+                    .has_headers(false)
+                    .from_reader(zipped_file);
+
+                create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
+            }
+            CSVReaders::File(csv_file) => {
+                let (filename, file) = csv_file;
+                let csv_reader = ReaderBuilder::new().has_headers(false).from_reader(file);
+                if options.delete_input_csv {
+                    std::fs::remove_file(&filename).context(IoSnafu {
+                        filename: filename.to_string_lossy(),
+                    })?;
+                }
+                create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
             }
         }
     }
@@ -831,8 +1057,8 @@ pub fn datapackage_to_parquet_with_options(output_path: PathBuf, datapackage: St
 mod tests {
     use super::*;
     use insta;
-    use std::io::BufRead;
     use parquet::file::reader::SerializedFileReader;
+    use std::io::BufRead;
 
     fn test_merged_csv_output(tmp: &PathBuf, name: String) {
         let csv_dir = tmp.join("csv");
@@ -863,7 +1089,7 @@ mod tests {
                     format!("fixtures/{datapackage1}/datapackage.json"),
                     format!("fixtures/{datapackage2}/datapackage.json"),
                 ],
-                options
+                options,
             )
             .unwrap();
 
@@ -951,16 +1177,30 @@ mod tests {
 
         let options = Options::builder().delete_input_csv(true).build();
 
-        std::fs::copy("fixtures/add_resource/datapackage.json", tmp.join("datapackage.json")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/datapackage.json",
+            tmp.join("datapackage.json"),
+        )
+        .unwrap();
         std::fs::create_dir_all(tmp.join("csv")).unwrap();
-        std::fs::copy("fixtures/add_resource/csv/games.csv", tmp.join("csv/games.csv")).unwrap();
-        std::fs::copy("fixtures/add_resource/csv/games2.csv", tmp.join("csv/games2.csv")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games.csv",
+            tmp.join("csv/games.csv"),
+        )
+        .unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games2.csv",
+            tmp.join("csv/games2.csv"),
+        )
+        .unwrap();
 
         datapackage_to_sqlite_with_options(
-            tmp.join("sqlite.db").to_string_lossy().into(), 
-            tmp.to_string_lossy().into(), 
-            options).unwrap();
-        
+            tmp.join("sqlite.db").to_string_lossy().into(),
+            tmp.to_string_lossy().into(),
+            options,
+        )
+        .unwrap();
+
         assert!(tmp.join("sqlite.db").exists());
         assert!(!tmp.join("csv/games.csv").exists());
         assert!(!tmp.join("csv/games2.csv").exists());
@@ -977,7 +1217,6 @@ mod tests {
             }
             insta::assert_yaml_snapshot!(output)
         }
-
     }
 
     #[test]
@@ -987,16 +1226,30 @@ mod tests {
 
         let options = Options::builder().delete_input_csv(true).build();
 
-        std::fs::copy("fixtures/add_resource/datapackage.json", tmp.join("datapackage.json")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/datapackage.json",
+            tmp.join("datapackage.json"),
+        )
+        .unwrap();
         std::fs::create_dir_all(tmp.join("csv")).unwrap();
-        std::fs::copy("fixtures/add_resource/csv/games.csv", tmp.join("csv/games.csv")).unwrap();
-        std::fs::copy("fixtures/add_resource/csv/games2.csv", tmp.join("csv/games2.csv")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games.csv",
+            tmp.join("csv/games.csv"),
+        )
+        .unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games2.csv",
+            tmp.join("csv/games2.csv"),
+        )
+        .unwrap();
 
         datapackage_to_parquet_with_options(
-            tmp.join("parquet"), 
-            tmp.to_string_lossy().into(), 
-            options).unwrap();
-        
+            tmp.join("parquet"),
+            tmp.to_string_lossy().into(),
+            options,
+        )
+        .unwrap();
+
         assert!(tmp.join("parquet/games.parquet").exists());
         assert!(tmp.join("parquet/games2.parquet").exists());
         assert!(!tmp.join("csv/games.csv").exists());
@@ -1020,6 +1273,52 @@ mod tests {
             }
             insta::assert_yaml_snapshot!(data)
         }
+    }
+
+    #[test]
+    fn test_xlsx() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        let options = Options::builder().delete_input_csv(true).build();
+
+        std::fs::copy(
+            "fixtures/add_resource/datapackage.json",
+            tmp.join("datapackage.json"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.join("csv")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games.csv",
+            tmp.join("csv/games.csv"),
+        )
+        .unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games2.csv",
+            tmp.join("csv/games2.csv"),
+        )
+        .unwrap();
+
+        datapackage_to_xlsx_with_options(
+            tmp.join("output.xlsx").to_string_lossy().into(),
+            tmp.to_string_lossy().into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_large_xlsx() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        let options = Options::builder().build();
+
+        datapackage_to_xlsx_with_options(
+            tmp.join("output.xlsx").to_string_lossy().into(),
+            "fixtures/large".into(),
+            options,
+        )
+        .unwrap();
     }
 
     #[test]
