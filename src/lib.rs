@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use xlsxwriter::Workbook;
+use std::io::Write;
+use postgres::{Client, NoTls};
 
 use arrow::csv::Reader;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -59,8 +61,8 @@ pub enum Error {
     #[snafu(display("Could not write row: {}", source))]
     CSVRowError { source: csv::Error },
 
-    #[snafu(display("{}", source))]
-    RusqliteError { source: rusqlite::Error },
+    #[snafu(display("{}{}", message, source))]
+    RusqliteError { source: rusqlite::Error, message: String},
 
     #[snafu(display("{}", source))]
     JinjaError { source: minijinja::Error },
@@ -70,6 +72,9 @@ pub enum Error {
 
     #[snafu(display("{}", source))]
     ArrowError { source: ArrowError },
+
+    #[snafu(display("Postgres Error: {}", source))]
+    PostgresError { source: postgres::Error },
 
     #[snafu(display("Error with writing XLSX file"))]
     XLSXError { source: xlsxwriter::XlsxError },
@@ -83,6 +88,8 @@ pub struct Options {
     pub seperator: String,
     #[builder(default)]
     pub use_titles: bool,
+    #[builder(default)]
+    pub drop: bool,
 }
 
 lazy_static::lazy_static! {
@@ -579,12 +586,61 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
     Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
 }
 
+fn render_postgres_table(value: Value) -> Result<String, Error> {
+    let postgres_table = r#"
+    CREATE TABLE IF NOT EXISTS "{{name}}" (
+        {% for field in schema.fields %}
+           {% if not loop.first %}, {% endif %}"{{field.name}}" {{field.type | postgres_type}} #nl
+        {% endfor %}
+        {% if schema.primaryKey is string %}
+           , PRIMARY KEY ("{{schema.primaryKey}}") #nl
+        {% endif %}
+        {% if schema.primaryKey is sequence %}
+           , PRIMARY KEY ("{{schema.primaryKey | join('","')}}") #nl
+        {% endif %}
+        {% if schema.foreignKeys is sequence %}
+           {% for foreignKey in schema.foreignKeys %}
+              {% if foreignKey.fields is string %}
+                , FOREIGN KEY ("{{foreignKey.fields}}") REFERENCES "{{foreignKey.reference.resource}}"("{{foreignKey.reference.fields}}") #nl
+              {% endif %}
+              {% if foreignKey.fields is sequence %}
+                , FOREIGN KEY ("{{foreignKey.fields | join('","')}}") 
+                  REFERENCES "{{foreignKey.reference.resource}}"("{{foreignKey.reference.fields | join('","')}}") #nl
+              {% endif %}
+           {% endfor %}
+        {% endif %}
+    ); #nl
+
+    {% if schema.foreignKeys is sequence %}
+        {% for foreignKey in schema.foreignKeys %}
+            {% if foreignKey.fields is string %}
+              CREATE INDEX "idx_{{name}}_{{foreignKey.fields}}" ON "{{name}}" ("{{foreignKey.fields}}"); #nl
+            {% endif %}
+            {% if foreignKey.fields is sequence %}
+              CREATE INDEX "idx_{{name}}_{{foreignKey.fields | join("_")}}" ON "{{name}}" ("{{foreignKey.fields | join('W,"')}}"); #nl
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+
+    "#;
+    let postgres_table = postgres_table.replace("  ", "");
+    let postgres_table = postgres_table.replace("\n", "");
+    let postgres_table = postgres_table.replace("#nl", "\n");
+
+    let mut env = Environment::new();
+    env.add_filter("postgres_type", to_sqlite_type);
+    env.add_template("postgres_resource", &postgres_table).unwrap();
+    let tmpl = env.get_template("postgres_resource").unwrap();
+    Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
+}
+
+
 fn insert_sql_data(
     csv_reader: csv::Reader<impl std::io::Read>,
     mut conn: rusqlite::Connection,
     resource: Value,
 ) -> Result<rusqlite::Connection, Error> {
-    let tx = conn.transaction().context(RusqliteSnafu {})?;
+    let tx = conn.transaction().context(RusqliteSnafu {message: "Error making transaction: "})?;
 
     let table = resource["name"].as_str().unwrap();
 
@@ -601,17 +657,17 @@ fn insert_sql_data(
     {
         let mut statement = tx
             .prepare_cached(&format!("INSERT INTO [{table}] VALUES ({question_marks})"))
-            .context(RusqliteSnafu {})?;
+            .context(RusqliteSnafu {message: "Error preparing sqlite statment: "})?;
 
         for row in csv_reader.into_deserialize() {
             let this_row: Vec<String> = row.context(CSVSnafu { filename: table })?;
 
             statement
                 .execute(rusqlite::params_from_iter(this_row.iter()))
-                .context(RusqliteSnafu {})?;
+                .context(RusqliteSnafu {message: "Error inserting data to sqlite: "})?;
         }
     }
-    tx.commit().context(RusqliteSnafu {})?;
+    tx.commit().context(RusqliteSnafu {message: "Error commiting sqlite: "})?;
     return Ok(conn);
 }
 
@@ -625,8 +681,63 @@ pub fn datapackage_to_sqlite_with_options(
     datapackage: String,
     options: Options,
 ) -> Result<(), Error> {
-    let mut datapackage_value = datapackage_json_to_value(&datapackage)?;
+    let (table_to_schema, ordered_tables) = get_table_info(&datapackage)?;
 
+    let mut conn = Connection::open(db_path).context(RusqliteSnafu {message: "Error opening connection: "})?;
+
+    conn.execute_batch(
+        "PRAGMA journal_mode = OFF;
+         PRAGMA synchronous = 0;
+         PRAGMA locking_mode = EXCLUSIVE;
+         PRAGMA temp_store = MEMORY;",
+    )
+    .context(RusqliteSnafu {message: "Error executing pragmas: "})?;
+
+    for table in ordered_tables {
+        let resource = table_to_schema.get(&table).unwrap();
+
+        let resource_sqlite = render_sqlite_table(resource.clone())?;
+
+        conn.execute(&resource_sqlite, [])
+            .context(RusqliteSnafu {message: "Error making sqlite tables: "})?;
+
+        ensure!(
+            resource["path"].is_string(),
+            DatapackageMergeSnafu {
+                message: "Datapackages resources need a `path`"
+            }
+        );
+
+        let resource_path = resource["path"].as_str().unwrap();
+
+        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+
+        match csv_readers {
+            CSVReaders::Zip(mut zip) => {
+                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                    filename: &datapackage,
+                })?;
+                let csv_reader = csv::Reader::from_reader(zipped_file);
+                conn = insert_sql_data(csv_reader, conn, resource.clone())?
+            }
+            CSVReaders::File(csv_file) => {
+                let (filename, file) = csv_file;
+                let csv_reader = csv::Reader::from_reader(file);
+                conn = insert_sql_data(csv_reader, conn, resource.clone())?;
+                if options.delete_input_csv {
+                    std::fs::remove_file(&filename).context(IoSnafu {
+                        filename: filename.to_string_lossy(),
+                    })?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn get_table_info(datapackage: &String) -> Result<(HashMap<String, Value>, Vec<String>), Error> {
+    let mut datapackage_value = datapackage_json_to_value(datapackage)?;
     let resources_option = datapackage_value["resources"].as_array_mut();
     ensure!(
         resources_option.is_some(),
@@ -634,10 +745,8 @@ pub fn datapackage_to_sqlite_with_options(
             message: "Datapackages need a `resources` key as an array"
         }
     );
-
     let mut table_links = Vec::new();
     let mut table_to_schema = HashMap::new();
-
     for resource in resources_option.unwrap().drain(..) {
         if let Some(name) = resource["name"].as_str() {
             if let Some(foreign_keys) = resource["schema"]["foreignKeys"].as_array() {
@@ -651,68 +760,13 @@ pub fn datapackage_to_sqlite_with_options(
             table_to_schema.insert(name.to_owned(), resource.clone());
         }
     }
-
     let mut relationhip_graph = petgraph::graphmap::DiGraphMap::new();
-
     for (x, y) in table_links.iter() {
         relationhip_graph.add_edge(y, x, 1);
     }
-
     let ordered_tables = petgraph::algo::kosaraju_scc(&relationhip_graph);
-
-    let mut conn = Connection::open(db_path).context(RusqliteSnafu {})?;
-
-    conn.execute_batch(
-        "PRAGMA journal_mode = OFF;
-         PRAGMA synchronous = 0;
-         PRAGMA locking_mode = EXCLUSIVE;
-         PRAGMA temp_store = MEMORY;",
-    )
-    .context(RusqliteSnafu {})?;
-
-    for tables in ordered_tables {
-        for table in tables {
-            let resource = table_to_schema.get(table).unwrap();
-
-            let resource_sqlite = render_sqlite_table(resource.clone())?;
-
-            conn.execute(&resource_sqlite, [])
-                .context(RusqliteSnafu {})?;
-
-            ensure!(
-                resource["path"].is_string(),
-                DatapackageMergeSnafu {
-                    message: "Datapackages resources need a `path`"
-                }
-            );
-
-            let resource_path = resource["path"].as_str().unwrap();
-
-            let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
-
-            match csv_readers {
-                CSVReaders::Zip(mut zip) => {
-                    let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
-                        filename: &datapackage,
-                    })?;
-                    let csv_reader = csv::Reader::from_reader(zipped_file);
-                    conn = insert_sql_data(csv_reader, conn, resource.clone())?
-                }
-                CSVReaders::File(csv_file) => {
-                    let (filename, file) = csv_file;
-                    let csv_reader = csv::Reader::from_reader(file);
-                    conn = insert_sql_data(csv_reader, conn, resource.clone())?;
-                    if options.delete_input_csv {
-                        std::fs::remove_file(&filename).context(IoSnafu {
-                            filename: filename.to_string_lossy(),
-                        })?;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
+    let tables: Vec<String> = ordered_tables.into_iter().flatten().map(|x| x.to_owned()).collect();
+    Ok((table_to_schema, tables))
 }
 
 fn create_parquet(
@@ -1053,6 +1107,71 @@ pub fn datapackage_to_xlsx_with_options(
     Ok(())
 }
 
+pub fn datapackage_to_postgres(postgres_url: String, datapackage: String) -> Result<(), Error> {
+    let options = Options::default();
+    datapackage_to_postgres_with_options(postgres_url, datapackage, options)
+}
+
+pub fn datapackage_to_postgres_with_options(
+    postgres_url: String,
+    datapackage: String,
+    options: Options,
+) -> Result<(), Error> {
+    let (table_to_schema, ordered_tables) = get_table_info(&datapackage)?;
+
+    let mut client = Client::connect(&postgres_url, NoTls).context(PostgresSnafu {})?;
+
+    for table in ordered_tables {
+        let resource = table_to_schema.get(&table).unwrap();
+
+        let resource_postgres = render_postgres_table(resource.clone())?;
+
+        if options.drop {
+            client.batch_execute(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE;")).context(PostgresSnafu {})?;
+        }
+
+        client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
+
+        ensure!(
+            resource["path"].is_string(),
+            DatapackageMergeSnafu {
+                message: "Datapackages resources need a `path`"
+            }
+        );
+
+        let resource_path = resource["path"].as_str().unwrap();
+
+        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+
+        match csv_readers {
+            CSVReaders::Zip(mut zip) => {
+                let mut zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                    filename: &datapackage,
+                })?;
+
+                let mut writer = client.copy_in(&format!("copy {table} from STDIN")).context(PostgresSnafu {})?;
+                std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {filename: resource_path})?;
+            }
+            CSVReaders::File(csv_file) => {
+                let (filename, mut file) = csv_file;
+                let mut writer = client.copy_in(&format!("copy {table} from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
+                std::io::copy(&mut file, &mut writer).context(IoSnafu {filename: resource_path})?;
+                file.flush().unwrap();
+                writer.finish().unwrap();
+
+                if options.delete_input_csv {
+                    std::fs::remove_file(&filename).context(IoSnafu {
+                        filename: filename.to_string_lossy(),
+                    })?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1332,5 +1451,17 @@ mod tests {
             "fixtures/conflict_types/datapackage.json".into()
         ])
         .unwrap());
+    }
+
+    #[test]
+    fn test_db_large() {
+        let options = Options::builder().drop(true).build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/large".into(),
+            options,
+        )
+        .unwrap();
     }
 }
