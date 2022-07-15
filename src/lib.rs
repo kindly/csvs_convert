@@ -90,6 +90,8 @@ pub struct Options {
     pub use_titles: bool,
     #[builder(default)]
     pub drop: bool,
+    #[builder(default)]
+    pub schema: String,
 }
 
 lazy_static::lazy_static! {
@@ -538,6 +540,16 @@ fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, mi
     Ok(output)
 }
 
+fn add_schema(_state: &minijinja::State, table:String, schema: String) -> Result<String, minijinja::Error> {
+    let output = if !schema.is_empty() {
+        format!("\"{schema}\".\"{table}\"")
+    } else {
+        table
+    };
+    Ok(output)
+}
+
+
 fn render_sqlite_table(value: Value) -> Result<String, Error> {
     let sqlite_table = r#"
     CREATE TABLE [{{name}}] (
@@ -617,7 +629,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
               CREATE INDEX "idx_{{name}}_{{foreignKey.fields}}" ON "{{name}}" ("{{foreignKey.fields}}"); #nl
             {% endif %}
             {% if foreignKey.fields is sequence %}
-              CREATE INDEX "idx_{{name}}_{{foreignKey.fields | join("_")}}" ON "{{name}}" ("{{foreignKey.fields | join('W,"')}}"); #nl
+              CREATE INDEX "idx_{{name}}_{{foreignKey.fields | join("_")}}" ON "{{name}}" ("{{foreignKey.fields | join('","')}}"); #nl
             {% endif %}
         {% endfor %}
     {% endif %}
@@ -629,6 +641,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
 
     let mut env = Environment::new();
     env.add_filter("postgres_type", to_sqlite_type);
+    env.add_filter("add_schema", add_schema);
     env.add_template("postgres_resource", &postgres_table).unwrap();
     let tmpl = env.get_template("postgres_resource").unwrap();
     Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
@@ -1124,14 +1137,6 @@ pub fn datapackage_to_postgres_with_options(
     for table in ordered_tables {
         let resource = table_to_schema.get(&table).unwrap();
 
-        let resource_postgres = render_postgres_table(resource.clone())?;
-
-        if options.drop {
-            client.batch_execute(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE;")).context(PostgresSnafu {})?;
-        }
-
-        client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
-
         ensure!(
             resource["path"].is_string(),
             DatapackageMergeSnafu {
@@ -1141,7 +1146,25 @@ pub fn datapackage_to_postgres_with_options(
 
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+        let mut resource_postgres = render_postgres_table(resource.clone())?;
+
+        if !options.schema.is_empty() {
+            resource_postgres = format!("
+                CREATE SCHEMA IF NOT EXISTS {schema};
+                set search_path = {schema};  
+                {resource_postgres};  
+            ", schema=options.schema)
+        }
+
+
+        if options.drop {
+            client.batch_execute(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE;")).context(PostgresSnafu {})?;
+        }
+
+        client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
+
+
+        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
 
         match csv_readers {
             CSVReaders::Zip(mut zip) => {
@@ -1455,7 +1478,7 @@ mod tests {
 
     #[test]
     fn test_db_large() {
-        let options = Options::builder().drop(true).build();
+        let options = Options::builder().drop(true).schema("test".into()).build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
