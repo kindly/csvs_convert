@@ -1150,9 +1150,9 @@ pub fn datapackage_to_postgres_with_options(
 
         if !options.schema.is_empty() {
             resource_postgres = format!("
-                CREATE SCHEMA IF NOT EXISTS {schema};
-                set search_path = {schema};  
-                {resource_postgres};  
+                CREATE SCHEMA IF NOT EXISTS \"{schema}\";
+                set search_path = \"{schema}\";  
+                {resource_postgres};
             ", schema=options.schema)
         }
 
