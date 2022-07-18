@@ -541,13 +541,11 @@ fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, mi
 }
 
 fn clean_field(_state: &minijinja::State, field: String) -> Result<String, minijinja::Error> {
-
     if INVALID_REGEX.is_match(&field) {
         return Ok(INVALID_REGEX.replace_all(&field, " ").to_string());
     }
     Ok(field)
 }
-
 
 fn render_sqlite_table(value: Value) -> Result<String, Error> {
     let sqlite_table = r#"
@@ -1141,9 +1139,7 @@ pub fn datapackage_to_postgres_with_options(
 
     let mut client = Client::connect(&postgres_url, NoTls).context(PostgresSnafu {})?;
 
-    //println!("{table_to_schema:#?}");
     for table in ordered_tables {
-        //println!("{table:#?}");
         let resource = table_to_schema.get(&table).unwrap();
 
         ensure!(
@@ -1156,8 +1152,6 @@ pub fn datapackage_to_postgres_with_options(
         let resource_path = resource["path"].as_str().unwrap();
 
         let mut resource_postgres = render_postgres_table(resource.clone())?;
-
-        //println!("{resource_postgres}");
 
         if !options.schema.is_empty() {
             resource_postgres = format!("
