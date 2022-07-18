@@ -540,13 +540,12 @@ fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, mi
     Ok(output)
 }
 
-fn add_schema(_state: &minijinja::State, table:String, schema: String) -> Result<String, minijinja::Error> {
-    let output = if !schema.is_empty() {
-        format!("\"{schema}\".\"{table}\"")
-    } else {
-        table
-    };
-    Ok(output)
+fn clean_field(_state: &minijinja::State, field: String) -> Result<String, minijinja::Error> {
+
+    if INVALID_REGEX.is_match(&field) {
+        return Ok(INVALID_REGEX.replace_all(&field, " ").to_string());
+    }
+    Ok(field)
 }
 
 
@@ -600,9 +599,9 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
 
 fn render_postgres_table(value: Value) -> Result<String, Error> {
     let postgres_table = r#"
-    CREATE TABLE IF NOT EXISTS "{{name}}" (
+    CREATE TABLE IF NOT EXISTS "{{title|default(name)}}" (
         {% for field in schema.fields %}
-           {% if not loop.first %}, {% endif %}"{{field.name}}" {{field.type | postgres_type}} #nl
+           {% if not loop.first %}, {% endif %}"{{field.name|clean_field}}" {{field.type | postgres_type}} #nl
         {% endfor %}
         {% if schema.primaryKey is string %}
            , PRIMARY KEY ("{{schema.primaryKey}}") #nl
@@ -626,10 +625,10 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
     {% if schema.foreignKeys is sequence %}
         {% for foreignKey in schema.foreignKeys %}
             {% if foreignKey.fields is string %}
-              CREATE INDEX "idx_{{name}}_{{foreignKey.fields}}" ON "{{name}}" ("{{foreignKey.fields}}"); #nl
+              CREATE INDEX "idx_{{title|default(name)}}_{{foreignKey.fields}}" ON "{{title|default(name)}}" ("{{foreignKey.fields}}"); #nl
             {% endif %}
             {% if foreignKey.fields is sequence %}
-              CREATE INDEX "idx_{{name}}_{{foreignKey.fields | join("_")}}" ON "{{name}}" ("{{foreignKey.fields | join('","')}}"); #nl
+              CREATE INDEX "idx_{{title|default(name)}}_{{foreignKey.fields | join("_")}}" ON "{{title|default(name)}}" ("{{foreignKey.fields | join('","')}}"); #nl
             {% endif %}
         {% endfor %}
     {% endif %}
@@ -641,7 +640,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
 
     let mut env = Environment::new();
     env.add_filter("postgres_type", to_sqlite_type);
-    env.add_filter("add_schema", add_schema);
+    env.add_filter("clean_field", clean_field);
     env.add_template("postgres_resource", &postgres_table).unwrap();
     let tmpl = env.get_template("postgres_resource").unwrap();
     Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
@@ -761,16 +760,24 @@ fn get_table_info(datapackage: &String) -> Result<(HashMap<String, Value>, Vec<S
     let mut table_links = Vec::new();
     let mut table_to_schema = HashMap::new();
     for resource in resources_option.unwrap().drain(..) {
-        if let Some(name) = resource["name"].as_str() {
+        let table_name = if let Some(name) = resource["title"].as_str() {
+            name
+        } else if let Some(name) = resource["name"].as_str() {
+            name
+        } else {
+            ""
+        };
+
+        if !table_name.is_empty() {
             if let Some(foreign_keys) = resource["schema"]["foreignKeys"].as_array() {
                 for value in foreign_keys {
                     if let Some(foreign_key_table) = value["reference"]["resource"].as_str() {
-                        table_links.push((foreign_key_table.to_owned(), name.to_owned()));
+                        table_links.push((foreign_key_table.to_owned(), table_name.to_owned()));
                     }
                 }
             }
-            table_links.push((name.to_owned(), name.to_owned()));
-            table_to_schema.insert(name.to_owned(), resource.clone());
+            table_links.push((table_name.to_owned(), table_name.to_owned()));
+            table_to_schema.insert(table_name.to_owned(), resource.clone());
         }
     }
     let mut relationhip_graph = petgraph::graphmap::DiGraphMap::new();
@@ -1134,7 +1141,9 @@ pub fn datapackage_to_postgres_with_options(
 
     let mut client = Client::connect(&postgres_url, NoTls).context(PostgresSnafu {})?;
 
+    //println!("{table_to_schema:#?}");
     for table in ordered_tables {
+        //println!("{table:#?}");
         let resource = table_to_schema.get(&table).unwrap();
 
         ensure!(
@@ -1148,6 +1157,8 @@ pub fn datapackage_to_postgres_with_options(
 
         let mut resource_postgres = render_postgres_table(resource.clone())?;
 
+        //println!("{resource_postgres}");
+
         if !options.schema.is_empty() {
             resource_postgres = format!("
                 CREATE SCHEMA IF NOT EXISTS \"{schema}\";
@@ -1158,7 +1169,10 @@ pub fn datapackage_to_postgres_with_options(
 
 
         if options.drop {
-            client.batch_execute(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE;")).context(PostgresSnafu {})?;
+            client.batch_execute(
+                &format!("set search_path = \"{schema}\"; 
+                DROP TABLE IF EXISTS \"{table}\" CASCADE;",
+                schema = options.schema)).context(PostgresSnafu {})?;
         }
 
         client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
@@ -1172,12 +1186,12 @@ pub fn datapackage_to_postgres_with_options(
                     filename: &datapackage,
                 })?;
 
-                let mut writer = client.copy_in(&format!("copy {table} from STDIN")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy \"{table}\" from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
                 std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {filename: resource_path})?;
             }
             CSVReaders::File(csv_file) => {
                 let (filename, mut file) = csv_file;
-                let mut writer = client.copy_in(&format!("copy {table} from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy \"{table}\" from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
                 std::io::copy(&mut file, &mut writer).context(IoSnafu {filename: resource_path})?;
                 file.flush().unwrap();
                 writer.finish().unwrap();
