@@ -1153,6 +1153,7 @@ pub fn datapackage_to_postgres_with_options(
 
         let mut resource_postgres = render_postgres_table(resource.clone())?;
 
+
         if !options.schema.is_empty() {
             resource_postgres = format!("
                 CREATE SCHEMA IF NOT EXISTS \"{schema}\";
@@ -1161,12 +1162,13 @@ pub fn datapackage_to_postgres_with_options(
             ", schema=options.schema)
         }
 
-
         if options.drop {
-            client.batch_execute(
-                &format!("set search_path = \"{schema}\"; 
-                DROP TABLE IF EXISTS \"{table}\" CASCADE;",
-                schema = options.schema)).context(PostgresSnafu {})?;
+            let mut drop_statement = String::new();
+            if !options.schema.is_empty() {
+                drop_statement.push_str(&format!("set search_path = \"{schema}\";", schema=options.schema));
+            }
+            drop_statement.push_str(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE;"));
+            client.batch_execute(&drop_statement).context(PostgresSnafu {})?
         }
 
         client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
