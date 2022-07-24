@@ -78,6 +78,9 @@ pub enum Error {
 
     #[snafu(display("Error with writing XLSX file"))]
     XLSXError { source: xlsxwriter::XlsxError },
+
+    #[snafu(display("Environment variable {} does not exist.", envvar))]
+    EnvVarError { source: std::env::VarError, envvar: String },
 }
 
 #[derive(Default, Debug, TypedBuilder)]
@@ -1137,7 +1140,23 @@ pub fn datapackage_to_postgres_with_options(
 ) -> Result<(), Error> {
     let (table_to_schema, ordered_tables) = get_table_info(&datapackage)?;
 
-    let mut client = Client::connect(&postgres_url, NoTls).context(PostgresSnafu {})?;
+    let mut conf = postgres_url.clone();
+
+    if postgres_url.trim_start().to_lowercase().starts_with("env") {
+        let split: Vec<_> = postgres_url.split("=").into_iter().collect();
+        let env = if split.len() == 1 {
+            "DATABASE_URL"
+        } else if split.len() == 2 {
+            split[1].trim()
+        } else {
+            ""
+        };
+        if !env.is_empty()  {
+            conf = std::env::var(env).context(EnvVarSnafu {envvar: env.to_owned()})?;
+        }
+    }
+
+    let mut client = Client::connect(&conf, NoTls).context(PostgresSnafu {})?;
 
     for table in ordered_tables {
         let resource = table_to_schema.get(&table).unwrap();
@@ -1492,6 +1511,31 @@ mod tests {
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
+            "fixtures/large".into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_from_env() {
+        let options = Options::builder().drop(true).schema("test_env".into()).build();
+
+        std::env::set_var("POSTGRES_URL", "postgresql://test@localhost/test");
+
+        datapackage_to_postgres_with_options(
+            " env= POSTGRES_URL ".into(),
+            "fixtures/large".into(),
+            options,
+        )
+        .unwrap();
+
+        let options = Options::builder().drop(true).schema("test_env".into()).build();
+
+        std::env::set_var("DATABASE_URL", "postgresql://test@localhost/test");
+
+        datapackage_to_postgres_with_options(
+            " env  ".into(),
             "fixtures/large".into(),
             options,
         )
