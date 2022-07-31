@@ -95,6 +95,8 @@ pub struct Options {
     pub drop: bool,
     #[builder(default)]
     pub schema: String,
+    #[builder(default)]
+    pub evolve: bool,
 }
 
 lazy_static::lazy_static! {
@@ -360,10 +362,10 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
         )))
     } else if file.ends_with(".zip") {
         let zip_file = File::open(&file).context(IoSnafu {
-            filename: file.clone(),
+            filename: file,
         })?;
         let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu {
-            filename: file.clone(),
+            filename: file,
         })?;
         Ok(CSVReaders::Zip(zip))
     } else if PathBuf::from(&file).is_dir() {
@@ -532,15 +534,18 @@ pub fn merge_datapackage_with_options(
     Ok(())
 }
 
-fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, minijinja::Error> {
-    let output = match value.as_str() {
+fn to_db_type(value: &str) -> String {
+    match value {
         "string" => "TEXT".to_string(),
         "date" => "TIMESTAMP".to_string(),
         "number" => "NUMERIC".to_string(),
-        "boolean" => "BOOLEAN".to_string(),
+        "boolean" => "BOOL".to_string(),
         _ => "TEXT".to_string(),
-    };
-    Ok(output)
+    }
+}
+
+fn to_sqlite_type(_state: &minijinja::State, value: String) -> Result<String, minijinja::Error> {
+    Ok(to_db_type(&value))
 }
 
 fn clean_field(_state: &minijinja::State, field: String) -> Result<String, minijinja::Error> {
@@ -1172,16 +1177,42 @@ pub fn datapackage_to_postgres_with_options(
 
         let mut resource_postgres = render_postgres_table(resource.clone())?;
 
+        let mut schema_table = format!("\"{table}\"");
 
         if !options.schema.is_empty() {
             resource_postgres = format!("
                 CREATE SCHEMA IF NOT EXISTS \"{schema}\";
                 set search_path = \"{schema}\";  
                 {resource_postgres};
-            ", schema=options.schema)
+            ", schema=options.schema);
+            schema_table = format!("\"{schema}\".\"{table}\"", schema=options.schema);
         }
 
-        if options.drop {
+        let result = client.query_one("SELECT to_regclass($1)::TEXT", &[&schema_table]).context(PostgresSnafu {})?;
+        let exists: Option<String> = result.get(0);
+
+        let mut create = exists.is_none();
+
+        let mut drop = options.drop;
+
+        let mut existing_columns= None;
+
+        if !create && options.evolve {
+            let result = client.query_opt(&format!("SELECT * FROM {schema_table} limit 1"), &[]).context(PostgresSnafu {})?;
+            if result.is_none(){
+                drop=true
+            }
+            if let Some(row) = result {
+                let mut columns = HashMap::new();
+                for column in row.columns() {
+                    columns.insert(column.name().to_owned(), column.type_().to_string());
+                }
+                existing_columns = Some(columns)
+            }
+        }
+
+        if drop && exists.is_some() {
+            create = true;
             let mut drop_statement = String::new();
             if !options.schema.is_empty() {
                 drop_statement.push_str(&format!("set search_path = \"{schema}\";", schema=options.schema));
@@ -1190,7 +1221,50 @@ pub fn datapackage_to_postgres_with_options(
             client.batch_execute(&drop_statement).context(PostgresSnafu {})?
         }
 
-        client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
+        if create {
+            client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
+        }
+
+        let mut columns = vec![];
+        if let Some(fields) = resource["schema"]["fields"].as_array() {
+            for field in fields {
+                if let Some(name) = field["name"].as_str() {
+                    columns.push(format!("\"{name}\""));
+                }
+            }
+        }
+        let all_columns = columns.join(", ");
+
+        let mut add_columns = vec![];
+
+        let mut alter_columns = vec![];
+
+        if let Some(existing_columns) = existing_columns {
+            if let Some(fields) = resource["schema"]["fields"].as_array() {
+                for field in fields {
+                    if let Some(name) = field["name"].as_str() {
+                        if let Some(type_) = field["type"].as_str() {
+                            let existing_column_type = existing_columns.get(name);
+                            if let Some(existing_column_type) = existing_column_type {
+                                if to_db_type(type_).to_lowercase() != existing_column_type.to_lowercase() {
+                                    alter_columns.push(name.to_owned());
+                                }
+                            } else {
+                                add_columns.push((name.to_owned(), to_db_type(type_)))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (name, type_) in add_columns {
+            client.batch_execute(&format!("ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}")).context(PostgresSnafu {})?;
+        }
+
+        for name in alter_columns {
+            client.batch_execute(&format!("ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT")).context(PostgresSnafu {})?;
+        }
 
 
         let csv_readers = get_csv_reader(&datapackage, resource_path)?;
@@ -1201,12 +1275,12 @@ pub fn datapackage_to_postgres_with_options(
                     filename: &datapackage,
                 })?;
 
-                let mut writer = client.copy_in(&format!("copy \"{table}\" from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
                 std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {filename: resource_path})?;
             }
             CSVReaders::File(csv_file) => {
                 let (filename, mut file) = csv_file;
-                let mut writer = client.copy_in(&format!("copy \"{table}\" from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
                 std::io::copy(&mut file, &mut writer).context(IoSnafu {filename: resource_path})?;
                 file.flush().unwrap();
                 writer.finish().unwrap();
@@ -1541,4 +1615,77 @@ mod tests {
         )
         .unwrap();
     }
+
+    #[test]
+    fn test_drop() {
+        let options = Options::builder().drop(true).schema("test_drop2".into()).build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/large".into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_evolve() {
+        let db_url = "postgresql://test@localhost/test";
+
+        let mut client = Client::connect(db_url, NoTls).unwrap();
+
+        let options = Options::builder().drop(true).schema("evolve".into()).build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+
+        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
+        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        insta::assert_yaml_snapshot!(name_type);
+
+        let options = Options::builder().evolve(true).schema("evolve".into()).build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+
+        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
+        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        insta::assert_yaml_snapshot!(name_type);
+
+        let options = Options::builder().evolve(true).schema("evolve".into()).build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/evolve/first".into(),
+            options,
+        )
+        .unwrap();
+
+        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
+        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        insta::assert_yaml_snapshot!(name_type);
+
+        let options = Options::builder().evolve(true).schema("evolve".into()).build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/evolve/second".into(),
+            options,
+        )
+        .unwrap();
+
+        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
+        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        insta::assert_yaml_snapshot!(name_type);
+
+    }
+
 }
