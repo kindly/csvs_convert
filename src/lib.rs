@@ -15,6 +15,7 @@ use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use xlsxwriter::Workbook;
 use std::io::Write;
+use std::fmt::Write as fmt_write;
 use postgres::{Client, NoTls};
 
 use arrow::csv::Reader;
@@ -322,10 +323,7 @@ fn write_merged_csv(
 ) -> Result<Writer<File>, Error> {
     let output_map: Vec<Option<usize>> = output_fields
         .iter()
-        .map(|field| match resource_fields.get(field) {
-            Some(field) => Some(*field),
-            None => None,
-        })
+        .map(|field| resource_fields.get(field).copied())
         .collect();
     let output_map_len = output_map.len();
     for row in csv_reader.into_records() {
@@ -593,14 +591,14 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
 
     "#;
     let sqlite_table = sqlite_table.replace("  ", "");
-    let sqlite_table = sqlite_table.replace("\n", "");
+    let sqlite_table = sqlite_table.replace('\n', "");
     let sqlite_table = sqlite_table.replace("#nl", "\n");
 
     let mut env = Environment::new();
     env.add_filter("sqlite_type", to_sqlite_type);
     env.add_template("sqlite_resource", &sqlite_table).unwrap();
     let tmpl = env.get_template("sqlite_resource").unwrap();
-    Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
+    tmpl.render(value).context(JinjaSnafu {})
 }
 
 fn render_postgres_table(value: Value) -> Result<String, Error> {
@@ -641,7 +639,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
 
     "#;
     let postgres_table = postgres_table.replace("  ", "");
-    let postgres_table = postgres_table.replace("\n", "");
+    let postgres_table = postgres_table.replace('\n', "");
     let postgres_table = postgres_table.replace("#nl", "\n");
 
     let mut env = Environment::new();
@@ -649,7 +647,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
     env.add_filter("clean_field", clean_field);
     env.add_template("postgres_resource", &postgres_table).unwrap();
     let tmpl = env.get_template("postgres_resource").unwrap();
-    Ok(tmpl.render(value).context(JinjaSnafu {})?.to_owned())
+    tmpl.render(value).context(JinjaSnafu {})
 }
 
 
@@ -686,7 +684,7 @@ fn insert_sql_data(
         }
     }
     tx.commit().context(RusqliteSnafu {message: "Error commiting sqlite: "})?;
-    return Ok(conn);
+    Ok(conn)
 }
 
 pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(), Error> {
@@ -728,11 +726,11 @@ pub fn datapackage_to_sqlite_with_options(
 
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
 
         match csv_readers {
             CSVReaders::Zip(mut zip) => {
-                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
                 let csv_reader = csv::Reader::from_reader(zipped_file);
@@ -754,7 +752,7 @@ pub fn datapackage_to_sqlite_with_options(
     Ok(())
 }
 
-fn get_table_info(datapackage: &String) -> Result<(HashMap<String, Value>, Vec<String>), Error> {
+fn get_table_info(datapackage: &str) -> Result<(HashMap<String, Value>, Vec<String>), Error> {
     let mut datapackage_value = datapackage_json_to_value(datapackage)?;
     let resources_option = datapackage_value["resources"].as_array_mut();
     ensure!(
@@ -913,11 +911,11 @@ pub fn datapackage_to_parquet_with_options(
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
 
         match csv_readers {
             CSVReaders::Zip(mut zip) => {
-                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
                 create_parquet(zipped_file, resource.clone(), output_path.clone())?
@@ -1104,11 +1102,11 @@ pub fn datapackage_to_xlsx_with_options(
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, &resource_path)?;
+        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
 
         match csv_readers {
             CSVReaders::Zip(mut zip) => {
-                let zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
                 let csv_reader = ReaderBuilder::new()
@@ -1148,7 +1146,7 @@ pub fn datapackage_to_postgres_with_options(
     let mut conf = postgres_url.clone();
 
     if postgres_url.trim_start().to_lowercase().starts_with("env") {
-        let split: Vec<_> = postgres_url.split("=").into_iter().collect();
+        let split: Vec<_> = postgres_url.split('=').into_iter().collect();
         let env = if split.len() == 1 {
             "DATABASE_URL"
         } else if split.len() == 2 {
@@ -1215,9 +1213,9 @@ pub fn datapackage_to_postgres_with_options(
             create = true;
             let mut drop_statement = String::new();
             if !options.schema.is_empty() {
-                drop_statement.push_str(&format!("set search_path = \"{schema}\";", schema=options.schema));
+                write!(drop_statement, "set search_path = \"{schema}\";", schema=options.schema).unwrap();
             }
-            drop_statement.push_str(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE;"));
+            write!(drop_statement, "DROP TABLE IF EXISTS \"{table}\" CASCADE;").unwrap();
             client.batch_execute(&drop_statement).context(PostgresSnafu {})?
         }
 
@@ -1271,7 +1269,7 @@ pub fn datapackage_to_postgres_with_options(
 
         match csv_readers {
             CSVReaders::Zip(mut zip) => {
-                let mut zipped_file = zip.by_name(&resource_path).context(ZipSnafu {
+                let mut zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
 
@@ -1301,7 +1299,7 @@ pub fn datapackage_to_postgres_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use insta;
+    
     use parquet::file::reader::SerializedFileReader;
     use std::io::BufRead;
 
@@ -1340,7 +1338,7 @@ mod tests {
 
             insta::assert_yaml_snapshot!(
                 format!("{name}_json"),
-                datapackage_json_to_value(&tmp.to_string_lossy().into_owned()).unwrap()
+                datapackage_json_to_value(&tmp.to_string_lossy()).unwrap()
             );
             test_merged_csv_output(&tmp, format!("{name}_json"))
         }
@@ -1360,7 +1358,7 @@ mod tests {
 
             insta::assert_yaml_snapshot!(
                 format!("{name}_folder"),
-                datapackage_json_to_value(&tmp.to_string_lossy().into_owned()).unwrap()
+                datapackage_json_to_value(&tmp.to_string_lossy()).unwrap()
             );
             test_merged_csv_output(&tmp, format!("{name}_folder"))
         }
@@ -1380,7 +1378,7 @@ mod tests {
 
             insta::assert_yaml_snapshot!(
                 format!("{name}_zip"),
-                datapackage_json_to_value(&tmp.to_string_lossy().into_owned()).unwrap()
+                datapackage_json_to_value(&tmp.to_string_lossy()).unwrap()
             );
             test_merged_csv_output(&tmp, format!("{name}_zip"))
         }
