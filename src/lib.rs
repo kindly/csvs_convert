@@ -82,6 +82,9 @@ pub enum Error {
 
     #[snafu(display("Environment variable {} does not exist.", envvar))]
     EnvVarError { source: std::env::VarError, envvar: String },
+
+    #[snafu(display("Delimeter not valid utf-8"))]
+    DelimeiterError { source: std::str::Utf8Error },
 }
 
 #[derive(Default, Debug, TypedBuilder)]
@@ -98,6 +101,16 @@ pub struct Options {
     pub schema: String,
     #[builder(default)]
     pub evolve: bool,
+    #[builder(default=b',')]
+    pub delimiter: u8,
+    #[builder(default=b'"')]
+    pub quote: u8,
+    #[builder(default=true)]
+    pub double_quote: bool,
+    #[builder(default=None)]
+    pub escape: Option<u8>,
+    #[builder(default=None)]
+    pub comment: Option<u8>,
 }
 
 lazy_static::lazy_static! {
@@ -342,17 +355,17 @@ fn write_merged_csv(
     Ok(csv_writer)
 }
 
-enum CSVReaders {
+enum Readers {
     File((PathBuf, File)),
     Zip(zip::ZipArchive<File>),
 }
 
-fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> {
+fn get_reader(file: &str, resource_path: &str) -> Result<Readers, Error> {
     if file.ends_with(".json") {
         let mut file_pathbuf = PathBuf::from(file);
         file_pathbuf.pop();
         file_pathbuf.push(&resource_path);
-        Ok(CSVReaders::File((
+        Ok(Readers::File((
             file_pathbuf.clone(),
             File::open(&file_pathbuf).context(IoSnafu {
                 filename: file_pathbuf.to_string_lossy(),
@@ -365,11 +378,11 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
         let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu {
             filename: file,
         })?;
-        Ok(CSVReaders::Zip(zip))
+        Ok(Readers::Zip(zip))
     } else if PathBuf::from(&file).is_dir() {
         let file_pathbuf = PathBuf::from(file);
         let file_pathbuf = file_pathbuf.join(&resource_path);
-        Ok(CSVReaders::File((
+        Ok(Readers::File((
             file_pathbuf.clone(),
             File::open(&file_pathbuf).context(IoSnafu {
                 filename: file_pathbuf.to_string_lossy(),
@@ -383,7 +396,7 @@ fn get_csv_reader(file: &str, resource_path: &str) -> Result<CSVReaders, Error> 
 }
 
 pub fn merge_datapackage(output_path: PathBuf, datapackages: Vec<String>) -> Result<(), Error> {
-    let options = Options::default();
+    let options = Options::builder().build();
     merge_datapackage_with_options(output_path, datapackages, options)
 }
 
@@ -491,20 +504,20 @@ pub fn merge_datapackage_with_options(
 
             let output_fields = output_fields.get_mut(&resource_path).unwrap();
 
-            let csv_readers = get_csv_reader(file, &resource_path)?;
+            let csv_readers = get_reader(file, &resource_path)?;
 
             match csv_readers {
-                CSVReaders::Zip(mut zip) => {
+                Readers::Zip(mut zip) => {
                     let zipped_file = zip
                         .by_name(&resource_path)
                         .context(ZipSnafu { filename: file })?;
-                    let csv_reader = csv::Reader::from_reader(zipped_file);
+                    let csv_reader = get_csv_reader_builder(&options).from_reader(zipped_file);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                 }
-                CSVReaders::File(file_reader) => {
+                Readers::File(file_reader) => {
                     let (filename, file_reader) = file_reader;
-                    let csv_reader = csv::Reader::from_reader(file_reader);
+                    let csv_reader = get_csv_reader_builder(&options).from_reader(file_reader);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                     if options.delete_input_csv {
@@ -530,6 +543,19 @@ pub fn merge_datapackage_with_options(
     }
 
     Ok(())
+}
+
+fn get_csv_reader_builder(options: &Options) -> csv::ReaderBuilder {
+    let mut reader_builder = ReaderBuilder::new();
+
+    reader_builder 
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .double_quote(options.double_quote)
+        .escape(options.escape)
+        .comment(options.comment);
+
+    reader_builder
 }
 
 fn to_db_type(value: &str) -> String {
@@ -688,7 +714,7 @@ fn insert_sql_data(
 }
 
 pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(), Error> {
-    let options = Options::default();
+    let options = Options::builder().build();
     datapackage_to_sqlite_with_options(db_path, datapackage, options)
 }
 
@@ -726,19 +752,19 @@ pub fn datapackage_to_sqlite_with_options(
 
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
+        let csv_readers = get_reader(&datapackage, resource_path)?;
 
         match csv_readers {
-            CSVReaders::Zip(mut zip) => {
+            Readers::Zip(mut zip) => {
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = csv::Reader::from_reader(zipped_file);
+                let csv_reader = get_csv_reader_builder(&options).from_reader(zipped_file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?
             }
-            CSVReaders::File(csv_file) => {
+            Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = csv::Reader::from_reader(file);
+                let csv_reader = get_csv_reader_builder(&options).from_reader(file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?;
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
@@ -797,6 +823,7 @@ fn create_parquet(
     file: impl std::io::Read,
     resource: Value,
     mut output_path: PathBuf,
+    options: &Options
 ) -> Result<(), Error> {
     ensure!(
         resource["name"].is_string(),
@@ -847,12 +874,13 @@ fn create_parquet(
         };
         arrow_fields.push(field);
     }
+    
 
     let arrow_csv_reader = Reader::new(
         file,
         std::sync::Arc::new(Schema::new(arrow_fields)),
         true,
-        None,
+        Some(options.delimiter),
         1024,
         None,
         None,
@@ -885,7 +913,7 @@ fn create_parquet(
 }
 
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
-    let options = Options::default();
+    let options = Options::builder().build();
     datapackage_to_parquet_with_options(output_path, datapackage, options)
 }
 
@@ -911,18 +939,18 @@ pub fn datapackage_to_parquet_with_options(
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
+        let csv_readers = get_reader(&datapackage, resource_path)?;
 
         match csv_readers {
-            CSVReaders::Zip(mut zip) => {
+            Readers::Zip(mut zip) => {
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                create_parquet(zipped_file, resource.clone(), output_path.clone())?
+                create_parquet(zipped_file, resource.clone(), output_path.clone(), &options)?
             }
-            CSVReaders::File(csv_reader) => {
+            Readers::File(csv_reader) => {
                 let (filename, file) = csv_reader;
-                create_parquet(file, resource.clone(), output_path.clone())?;
+                create_parquet(file, resource.clone(), output_path.clone(), &options)?;
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
                         filename: filename.to_string_lossy(),
@@ -1074,7 +1102,7 @@ fn create_sheet(
 }
 
 pub fn datapackage_to_xlsx(xlsx_path: String, datapackage: String) -> Result<(), Error> {
-    let options = Options::default();
+    let options = Options::builder().build();
     datapackage_to_xlsx_with_options(xlsx_path, datapackage, options)
 }
 
@@ -1102,22 +1130,20 @@ pub fn datapackage_to_xlsx_with_options(
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
+        let csv_readers = get_reader(&datapackage, resource_path)?;
 
         match csv_readers {
-            CSVReaders::Zip(mut zip) => {
+            Readers::Zip(mut zip) => {
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = ReaderBuilder::new()
-                    .has_headers(false)
-                    .from_reader(zipped_file);
+                let csv_reader = get_csv_reader_builder(&options).has_headers(false).from_reader(zipped_file);
 
                 create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
             }
-            CSVReaders::File(csv_file) => {
+            Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = ReaderBuilder::new().has_headers(false).from_reader(file);
+                let csv_reader = get_csv_reader_builder(&options).has_headers(false).from_reader(file);
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
                         filename: filename.to_string_lossy(),
@@ -1132,7 +1158,7 @@ pub fn datapackage_to_xlsx_with_options(
 }
 
 pub fn datapackage_to_postgres(postgres_url: String, datapackage: String) -> Result<(), Error> {
-    let options = Options::default();
+    let options = Options::builder().build();
     datapackage_to_postgres_with_options(postgres_url, datapackage, options)
 }
 
@@ -1264,21 +1290,21 @@ pub fn datapackage_to_postgres_with_options(
             client.batch_execute(&format!("ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT")).context(PostgresSnafu {})?;
         }
 
-
-        let csv_readers = get_csv_reader(&datapackage, resource_path)?;
+        let csv_readers = get_reader(&datapackage, resource_path)?;
+        let delimeter = std::str::from_utf8(&[options.delimiter]).context(DelimeiterSnafu {})?.to_owned();
 
         match csv_readers {
-            CSVReaders::Zip(mut zip) => {
+            Readers::Zip(mut zip) => {
                 let mut zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
 
-                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER DELIMITER '{delimeter}'")).context(PostgresSnafu {})?;
                 std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {filename: resource_path})?;
             }
-            CSVReaders::File(csv_file) => {
+            Readers::File(csv_file) => {
                 let (filename, mut file) = csv_file;
-                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER DELIMITER '{delimeter}'")).context(PostgresSnafu {})?;
                 std::io::copy(&mut file, &mut writer).context(IoSnafu {filename: resource_path})?;
                 file.flush().unwrap();
                 writer.finish().unwrap();
