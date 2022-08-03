@@ -1,6 +1,6 @@
 [package]
 name = "datapackage_convert"
-version = "0.5.6"
+version = "0.6.0"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -13,22 +13,22 @@ homepage = "https://github.com/kindly/datapackage_convert"
 
 [dependencies]
 
-parquet = {version = "11.1.0",  default-features = false, features = ["arrow", "snap", "brotli", "flate2", "lz4", "base64"]}
-arrow = "11.1.0"
-serde_json = { version = "1.0.79", features = ["preserve_order"] }
+parquet = { version = "19.0.0", default-features = false, features = ["arrow", "snap", "brotli", "flate2", "lz4", "base64"] }
+arrow = "19.0.0"
+serde_json = { version = "1.0.83", features = ["preserve_order"] }
 csv = "1.1.6"
-snafu = "0.7.0"
-zip = "0.6.0"
+snafu = "0.7.1"
+zip = "0.6.2"
 tempfile = "3.3.0"
 walkdir = "2.3.2"
-petgraph = "0.6.0"
-rusqlite = {version = "0.27.0", features = ["bundled"] }
-minijinja = "0.15.0"
+petgraph = "0.6.2"
+rusqlite = { version = "0.28.0", features = ["bundled"] }
+minijinja = "0.17.0"
 typed-builder = "0.10.0"
 xlsxwriter = "0.3.5"
 lazy_static = "1.4.0"
-regex = "1.5.5"
+regex = "1.6.0"
 postgres = "0.19.3"
 
 [dev-dependencies]
-insta = { version = "1.14.0", features = ["redactions"] }
+insta = { version = "1.17.1", features = ["redactions"] }
