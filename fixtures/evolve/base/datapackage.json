@@ -1,0 +1,31 @@
+{
+  "profile": "tabular-data-package",
+  "resources": [
+    {
+      "profile": "tabular-data-resource",
+      "name": "evolve",
+      "title": "evolve",
+      "schema": {
+        "fields": [
+          {
+            "name": "string",
+            "type": "string"
+          },
+          {
+            "name": "date",
+            "type": "date"
+          },
+          {
+            "name": "number",
+            "type": "number"
+          },
+          {
+            "name": "boolean",
+            "type": "boolean"
+          }
+        ]
+      },
+      "path": "evolve.csv"
+    } 
+  ]
+}

@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+expression: output
+---
+- - a string
+  - 2005-02-01
+  - "42"
+  - "true"
+

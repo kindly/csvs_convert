@@ -581,7 +581,7 @@ fn clean_field(_state: &minijinja::State, field: String) -> Result<String, minij
 
 fn render_sqlite_table(value: Value) -> Result<String, Error> {
     let sqlite_table = r#"
-    CREATE TABLE [{{name}}] (
+    CREATE TABLE [{{title|default(name)}}] (
         {% for field in schema.fields %}
            {% if not loop.first %}, {% endif %}[{{field.name}}] {{field.type | sqlite_type}} #nl
         {% endfor %}
@@ -686,19 +686,27 @@ fn insert_sql_data(
 
     let table = resource["name"].as_str().unwrap();
 
-    let mut fields = 0;
+    let mut fields_len = 0;
+    let mut fields = vec![];
 
     if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
-        fields = fields_vec.len();
+        fields_len = fields_vec.len();
+        for field_value in fields_vec {
+            if let Some(field) = field_value["name"].as_str(){
+                fields.push(format!("[{field}]"))
+            }
+        }
     };
 
-    let mut question_marks = "?,".repeat(fields);
+    let fields = fields.join(", ");
+
+    let mut question_marks = "?,".repeat(fields_len);
 
     question_marks.pop();
 
     {
         let mut statement = tx
-            .prepare_cached(&format!("INSERT INTO [{table}] VALUES ({question_marks})"))
+            .prepare_cached(&format!("INSERT INTO [{table}]({fields}) VALUES ({question_marks})"))
             .context(RusqliteSnafu {message: "Error preparing sqlite statment: "})?;
 
         for row in csv_reader.into_deserialize() {
@@ -735,13 +743,36 @@ pub fn datapackage_to_sqlite_with_options(
     )
     .context(RusqliteSnafu {message: "Error executing pragmas: "})?;
 
+
     for table in ordered_tables {
         let resource = table_to_schema.get(&table).unwrap();
 
-        let resource_sqlite = render_sqlite_table(resource.clone())?;
+        let mut existing_columns: HashMap<String, String> = HashMap::new();
 
-        conn.execute(&resource_sqlite, [])
-            .context(RusqliteSnafu {message: "Error making sqlite tables: "})?;
+        {
+            let mut fields_query = conn.prepare("select name, type from pragma_table_info(?)").context(RusqliteSnafu {message: "Error peparing sql"})?;
+
+            let mut rows = fields_query.query(
+                [&table],
+            ).context(RusqliteSnafu {message: "Error peparing sql"})?;
+
+            while let Some(row) = rows.next().context(RusqliteSnafu {message: "Error fetching rows"})? {
+                existing_columns.insert(
+                    row.get(0).context(RusqliteSnafu {message: "Error fetching rows"})?,
+                    row.get(1).context(RusqliteSnafu {message: "Error fetching rows"})?,
+                );
+            }
+        }
+
+        let mut create = false;
+
+        if existing_columns.len() == 0 {
+            create = true
+        } else if options.drop {
+            conn.execute(&format!("drop table [{table}];"), [])
+                .context(RusqliteSnafu {message: "Error making sqlite tables: "})?;
+            create = true
+        }
 
         ensure!(
             resource["path"].is_string(),
@@ -749,6 +780,18 @@ pub fn datapackage_to_sqlite_with_options(
                 message: "Datapackages resources need a `path`"
             }
         );
+
+        if create {
+            let resource_sqlite = render_sqlite_table(resource.clone())?;
+
+            conn.execute(&resource_sqlite, [])
+                .context(RusqliteSnafu {message: "Error making sqlite tables: "})?;
+        } else if options.evolve {
+            let (add_columns, _alter_columns) = get_column_changes(resource, existing_columns);
+            for (name, type_) in add_columns {
+                conn.execute(&format!("ALTER TABLE {table} ADD [{name}] {type_}"), []).context(RusqliteSnafu {message: "Error altering sqlite tables: "})?;
+            }
+        }
 
         let resource_path = resource["path"].as_str().unwrap();
 
@@ -1259,36 +1302,18 @@ pub fn datapackage_to_postgres_with_options(
         }
         let all_columns = columns.join(", ");
 
-        let mut add_columns = vec![];
-
-        let mut alter_columns = vec![];
 
         if let Some(existing_columns) = existing_columns {
-            if let Some(fields) = resource["schema"]["fields"].as_array() {
-                for field in fields {
-                    if let Some(name) = field["name"].as_str() {
-                        if let Some(type_) = field["type"].as_str() {
-                            let existing_column_type = existing_columns.get(name);
-                            if let Some(existing_column_type) = existing_column_type {
-                                if to_db_type(type_).to_lowercase() != existing_column_type.to_lowercase() {
-                                    alter_columns.push(name.to_owned());
-                                }
-                            } else {
-                                add_columns.push((name.to_owned(), to_db_type(type_)))
-                            }
-                        }
-                    }
-                }
+            let (add_columns, alter_columns) = get_column_changes(resource, existing_columns);
+            for (name, type_) in add_columns {
+                client.batch_execute(&format!("ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}")).context(PostgresSnafu {})?;
+            }
+
+            for name in alter_columns {
+                client.batch_execute(&format!("ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT")).context(PostgresSnafu {})?;
             }
         }
 
-        for (name, type_) in add_columns {
-            client.batch_execute(&format!("ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}")).context(PostgresSnafu {})?;
-        }
-
-        for name in alter_columns {
-            client.batch_execute(&format!("ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT")).context(PostgresSnafu {})?;
-        }
 
         let csv_readers = get_reader(&datapackage, resource_path)?;
         let delimeter = std::str::from_utf8(&[options.delimiter]).context(DelimeiterSnafu {})?.to_owned();
@@ -1321,12 +1346,35 @@ pub fn datapackage_to_postgres_with_options(
     Ok(())
 }
 
+fn get_column_changes(resource: &Value, existing_columns: HashMap<String, String>) -> (Vec<(String, String)>, Vec<String>){
+    let mut add_columns = vec![];
+    let mut alter_columns = vec![];
+    if let Some(fields) = resource["schema"]["fields"].as_array() {
+        for field in fields {
+            if let Some(name) = field["name"].as_str() {
+                if let Some(type_) = field["type"].as_str() {
+                    let existing_column_type = existing_columns.get(name);
+                    if let Some(existing_column_type) = existing_column_type {
+                        if to_db_type(type_).to_lowercase() != existing_column_type.to_lowercase() {
+                            alter_columns.push(name.to_owned());
+                        }
+                    } else {
+                        add_columns.push((name.to_owned(), to_db_type(type_)))
+                    }
+                }
+            }
+        }
+    }
+    return (add_columns, alter_columns)
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     
     use parquet::file::reader::SerializedFileReader;
+    use rusqlite::types::ValueRef;
     use std::io::BufRead;
 
     fn test_merged_csv_output(tmp: &PathBuf, name: String) {
@@ -1641,7 +1689,7 @@ mod tests {
     }
 
     #[test]
-    fn test_drop() {
+    fn test_drop_postgres() {
         let options = Options::builder().drop(true).schema("test_drop2".into()).build();
 
         datapackage_to_postgres_with_options(
@@ -1653,7 +1701,7 @@ mod tests {
     }
 
     #[test]
-    fn test_evolve() {
+    fn test_evolve_postgres() {
         let db_url = "postgresql://test@localhost/test";
 
         let mut client = Client::connect(db_url, NoTls).unwrap();
@@ -1710,6 +1758,98 @@ mod tests {
         let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
         insta::assert_yaml_snapshot!(name_type);
 
+    }
+
+    #[test]
+    fn test_drop_sqlite() {
+        let options = Options::builder().drop(true).build();
+        datapackage_to_sqlite_with_options(
+            "/tmp/sqlite.db".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+
+        let options = Options::builder().drop(true).build();
+        datapackage_to_sqlite_with_options(
+            "/tmp/sqlite.db".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_evolve_sqlite() {
+        let options = Options::builder().drop(true).build();
+
+        datapackage_to_sqlite_with_options(
+            "/tmp/evolve.db".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+
+        let output = check_evolve();
+        insta::assert_yaml_snapshot!(output);
+
+        let options = Options::builder().evolve(true).build();
+
+        datapackage_to_sqlite_with_options(
+            "/tmp/evolve.db".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+
+        let output = check_evolve();
+        insta::assert_yaml_snapshot!(output);
+
+        let options = Options::builder().evolve(true).build();
+
+        datapackage_to_sqlite_with_options(
+            "/tmp/evolve.db".into(),
+            "fixtures/evolve/first".into(),
+            options,
+        )
+        .unwrap();
+
+        let output = check_evolve();
+        insta::assert_yaml_snapshot!(output);
+
+        let options = Options::builder().evolve(true).build();
+
+        datapackage_to_sqlite_with_options(
+            "/tmp/evolve.db".into(),
+            "fixtures/evolve/second".into(),
+            options,
+        )
+        .unwrap();
+
+        let output = check_evolve();
+        insta::assert_yaml_snapshot!(output);
+
+    }
+
+    fn check_evolve() -> Vec<Vec<String>> {
+        let conn = Connection::open("/tmp/evolve.db").unwrap();
+        let mut stmt = conn.prepare("select * from evolve").unwrap();
+        let count = stmt.column_count();
+        let mut rows = stmt.query([]).unwrap();
+        let mut output= vec![];
+        while let Some(row) = rows.next().unwrap() {
+            let mut row_data: Vec<String> = vec![];
+            for i in 0..count {
+                let value = row.get_ref_unwrap(i);
+                match value {
+                    ValueRef::Text(text) => {row_data.push(std::str::from_utf8(text).unwrap().to_owned())} 
+                    ValueRef::Integer(num) => {row_data.push(num.to_string())}
+                    other => {row_data.push(format!("{:?}", other))} 
+                }
+            }
+            output.push(row_data);
+        }
+        output
     }
 
 }
