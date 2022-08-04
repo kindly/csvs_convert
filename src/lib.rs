@@ -594,10 +594,7 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
         {% if schema.foreignKeys is sequence %}
            {% for foreignKey in schema.foreignKeys %}
               {% if foreignKey.fields is string %}
-                , FOREIGN KEY ([{{foreignKey.fields}}]) REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields}}]) #nl
-              {% endif %}
-              {% if foreignKey.fields is sequence %}
-                , FOREIGN KEY ([{{foreignKey.fields | join("],[")}}]) 
+                , FOREIGN KEY ([{{foreignKey.fields}}]) REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields}}]) #nl {% endif %} {% if foreignKey.fields is sequence %} , FOREIGN KEY ([{{foreignKey.fields | join("],[")}}])
                   REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields | join("],[")}}]) #nl
               {% endif %}
            {% endfor %}
@@ -607,10 +604,10 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
     {% if schema.foreignKeys is sequence %}
         {% for foreignKey in schema.foreignKeys %}
             {% if foreignKey.fields is string %}
-              CREATE INDEX [idx_{{name}}_{{foreignKey.fields}}] ON [{{name}}] ([{{foreignKey.fields}}]); #nl
+              CREATE INDEX [idx_{{name}}_{{foreignKey.fields}}] ON [{{title|default(name)}}] ([{{foreignKey.fields}}]); #nl
             {% endif %}
             {% if foreignKey.fields is sequence %}
-              CREATE INDEX [idx_{{name}}_{{foreignKey.fields | join("_")}}] ON [{{name}}] ([{{foreignKey.fields | join("],[")}}]); #nl
+              CREATE INDEX [idx_{{name}}_{{foreignKey.fields | join("_")}}] ON [{{title|default(name)}}] ([{{foreignKey.fields | join("],[")}}]); #nl
             {% endif %}
         {% endfor %}
     {% endif %}
@@ -645,7 +642,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
                 , FOREIGN KEY ("{{foreignKey.fields}}") REFERENCES "{{foreignKey.reference.resource}}"("{{foreignKey.reference.fields}}") #nl
               {% endif %}
               {% if foreignKey.fields is sequence %}
-                , FOREIGN KEY ("{{foreignKey.fields | join('","')}}") 
+                , FOREIGN KEY ("{{foreignKey.fields | join('","')}}")
                   REFERENCES "{{foreignKey.reference.resource}}"("{{foreignKey.reference.fields | join('","')}}") #nl
               {% endif %}
            {% endfor %}
@@ -684,7 +681,11 @@ fn insert_sql_data(
 ) -> Result<rusqlite::Connection, Error> {
     let tx = conn.transaction().context(RusqliteSnafu {message: "Error making transaction: "})?;
 
-    let table = resource["name"].as_str().unwrap();
+    let mut table = resource["name"].as_str().unwrap();
+
+    if let Some(title) = resource["title"].as_str() {
+        table = title
+    }
 
     let mut fields_len = 0;
     let mut fields = vec![];
@@ -917,7 +918,7 @@ fn create_parquet(
         };
         arrow_fields.push(field);
     }
-    
+
 
     let arrow_csv_reader = Reader::new(
         file,
@@ -1249,7 +1250,7 @@ pub fn datapackage_to_postgres_with_options(
         if !options.schema.is_empty() {
             resource_postgres = format!("
                 CREATE SCHEMA IF NOT EXISTS \"{schema}\";
-                set search_path = \"{schema}\";  
+                set search_path = \"{schema}\";
                 {resource_postgres};
             ", schema=options.schema);
             schema_table = format!("\"{schema}\".\"{table}\"", schema=options.schema);
@@ -1300,7 +1301,11 @@ pub fn datapackage_to_postgres_with_options(
                 }
             }
         }
-        let all_columns = columns.join(", ");
+        let mut all_columns = columns.join(", ");
+
+        if INVALID_REGEX.is_match(&all_columns) {
+            all_columns = INVALID_REGEX.replace_all(&all_columns, "").to_string();
+        }
 
 
         if let Some(existing_columns) = existing_columns {
@@ -1842,9 +1847,9 @@ mod tests {
             for i in 0..count {
                 let value = row.get_ref_unwrap(i);
                 match value {
-                    ValueRef::Text(text) => {row_data.push(std::str::from_utf8(text).unwrap().to_owned())} 
+                    ValueRef::Text(text) => {row_data.push(std::str::from_utf8(text).unwrap().to_owned())}
                     ValueRef::Integer(num) => {row_data.push(num.to_string())}
-                    other => {row_data.push(format!("{:?}", other))} 
+                    other => {row_data.push(format!("{:?}", other))}
                 }
             }
             output.push(row_data);
