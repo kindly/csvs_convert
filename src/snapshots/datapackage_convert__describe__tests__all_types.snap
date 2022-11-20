@@ -1,0 +1,39 @@
+---
+source: src/describe.rs
+expression: datapackage
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: all_types
+    schema:
+      fields:
+        - name: string
+          type: string
+          format: string
+        - name: array
+          type: array
+          format: array
+        - name: object
+          type: object
+          format: object
+        - name: date
+          type: date
+          format: "%Y-%m-%d"
+        - name: datetime
+          type: datetime
+          format: "%Y-%m-%d %H:%M"
+        - name: time
+          type: time
+          format: "%H:%M"
+        - name: boolean
+          type: boolean
+          format: boolean
+        - name: number
+          type: number
+          format: number
+        - name: integer
+          type: integer
+          format: integer
+    path: src/fixtures/all_types.csv
+
