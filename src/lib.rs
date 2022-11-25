@@ -87,7 +87,7 @@ pub enum Error {
     #[snafu(display("Environment variable {} does not exist.", envvar))]
     EnvVarError { source: std::env::VarError, envvar: String },
 
-    #[snafu(display("Delimeter not valid utf-8"))]
+    #[snafu(display("Delimiter not valid utf-8"))]
     DelimeiterError { source: std::str::Utf8Error },
 
     #[snafu(display("{}", source))]
@@ -530,13 +530,13 @@ pub fn merge_datapackage_with_options(
                     let zipped_file = zip
                         .by_name(&resource_path)
                         .context(ZipSnafu { filename: file })?;
-                    let csv_reader = get_csv_reader_builder(&options).from_reader(zipped_file);
+                    let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                 }
                 Readers::File(file_reader) => {
                     let (filename, file_reader) = file_reader;
-                    let csv_reader = get_csv_reader_builder(&options).from_reader(file_reader);
+                    let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(file_reader);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                     if options.delete_input_csv {
@@ -564,13 +564,31 @@ pub fn merge_datapackage_with_options(
     Ok(())
 }
 
-fn get_csv_reader_builder(options: &Options) -> csv::ReaderBuilder {
+fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBuilder {
     let mut reader_builder = ReaderBuilder::new();
+    let mut delimiter = options.delimiter.unwrap_or(b',');
+    if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
+        if dialect_delimiter.as_bytes().len() == 1 {
+            delimiter = *dialect_delimiter.as_bytes().get(0).unwrap()
+        }
+    };
+
+    let mut quote = options.quote.unwrap_or(b'"');
+    if let Some(dialect_quote) = resource["dialect"]["quoteChar"].as_str() {
+        if dialect_quote.as_bytes().len() == 1 {
+            quote = *dialect_quote.as_bytes().get(0).unwrap()
+        }
+    };
+
+    let mut double_quote = options.double_quote;
+    if let Some(dialect_double_quote) = resource["dialect"]["doubleQuote"].as_bool() {
+        double_quote = dialect_double_quote
+    };
 
     reader_builder 
-        .delimiter(options.delimiter.unwrap_or(b','))
-        .quote(options.quote.unwrap_or(b'"'))
-        .double_quote(options.double_quote)
+        .delimiter(delimiter)
+        .quote(quote)
+        .double_quote(double_quote)
         .escape(options.escape)
         .comment(options.comment);
 
@@ -908,12 +926,12 @@ pub fn datapackage_to_sqlite_with_options(
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = get_csv_reader_builder(&options).from_reader(zipped_file);
+                let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?
             }
             Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = get_csv_reader_builder(&options).from_reader(file);
+                let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?;
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
@@ -1030,12 +1048,18 @@ fn create_parquet(
         arrow_fields.push(field);
     }
 
+    let mut delimiter = options.delimiter.unwrap_or(b',');
+    if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
+        if dialect_delimiter.as_bytes().len() == 1 {
+            delimiter = *dialect_delimiter.as_bytes().get(0).unwrap()
+        }
+    };
 
     let arrow_csv_reader = Reader::new(
         file,
         std::sync::Arc::new(Schema::new(arrow_fields)),
         true,
-        Some(options.delimiter.unwrap_or(b',')),
+        Some(delimiter),
         1024,
         None,
         None,
@@ -1242,7 +1266,7 @@ fn create_sheet(
         for (col_index, value) in this_row.iter().enumerate() {
             let mut cell = value.to_string();
 
-            if field_types[col_index] == "number" {
+            if ["number", "integer"].contains(&field_types[col_index].as_str()) {
                 if let Ok(number) = value.parse::<f64>() {
                     worksheet
                         .write_number(
@@ -1255,6 +1279,7 @@ fn create_sheet(
                     continue;
                 }
             }
+
 
             if INVALID_REGEX.is_match(&cell) {
                 cell = INVALID_REGEX.replace_all(&cell, "").to_string();
@@ -1273,6 +1298,20 @@ fn create_sheet(
     Ok(())
 }
 
+
+pub fn csvs_to_xlsx(xlsx_path: String, csvs: Vec<PathBuf>) -> Result<(), Error> {
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), None, None).context(DescribeSnafu {})?;
+    let mut options = Options::builder().build();
+    options.datapackage_string = true;
+    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)
+}
+
+pub fn csvs_to_xlsx_with_options(xlsx_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<(), Error> {
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), options.delimiter, options.quote).context(DescribeSnafu {})?;
+    options.datapackage_string = true;
+    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)
+}
+
 pub fn datapackage_to_xlsx(xlsx_path: String, datapackage: String) -> Result<(), Error> {
     let options = Options::builder().build();
     datapackage_to_xlsx_with_options(xlsx_path, datapackage, options)
@@ -1283,7 +1322,11 @@ pub fn datapackage_to_xlsx_with_options(
     datapackage: String,
     options: Options,
 ) -> Result<(), Error> {
-    let mut datapackage_value = datapackage_json_to_value(&datapackage)?;
+    let mut datapackage_value = if options.datapackage_string {
+        serde_json::from_str(&datapackage).context(JSONDecodeSnafu {})?
+    } else {
+        datapackage_json_to_value(&datapackage)?
+    };
 
     let resources_option = datapackage_value["resources"].as_array_mut();
     ensure!(
@@ -1309,13 +1352,13 @@ pub fn datapackage_to_xlsx_with_options(
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = get_csv_reader_builder(&options).has_headers(false).from_reader(zipped_file);
+                let csv_reader = get_csv_reader_builder(&options, &resource).has_headers(false).from_reader(zipped_file);
 
                 create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
             }
             Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = get_csv_reader_builder(&options).has_headers(false).from_reader(file);
+                let csv_reader = get_csv_reader_builder(&options, &resource).has_headers(false).from_reader(file);
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
                         filename: filename.to_string_lossy(),
@@ -1462,7 +1505,25 @@ pub fn datapackage_to_postgres_with_options(
 
 
         let csv_readers = get_reader(&datapackage, resource_path, &options)?;
-        let delimeter = std::str::from_utf8(&[options.delimiter.unwrap_or(b',')]).context(DelimeiterSnafu {})?.to_owned();
+
+        let mut delimiter_u8 = options.delimiter.unwrap_or(b',');
+
+        if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
+            if dialect_delimiter.as_bytes().len() == 1 {
+                delimiter_u8 = *dialect_delimiter.as_bytes().get(0).unwrap()
+            }
+        };
+
+        let delimiter = std::str::from_utf8(&[delimiter_u8]).context(DelimeiterSnafu {})?.to_owned();
+
+        let mut quote_u8 = options.quote.unwrap_or(b'"');
+        if let Some(dialect_quote) = resource["dialect"]["quote"].as_str() {
+            if dialect_quote.as_bytes().len() == 1 {
+                quote_u8 = *dialect_quote.as_bytes().get(0).unwrap()
+            }
+        };
+
+        let quote = std::str::from_utf8(&[quote_u8]).context(DelimeiterSnafu {})?.to_owned();
 
         match csv_readers {
             Readers::Zip(mut zip) => {
@@ -1470,12 +1531,12 @@ pub fn datapackage_to_postgres_with_options(
                     filename: &datapackage,
                 })?;
 
-                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER DELIMITER '{delimeter}'")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'")).context(PostgresSnafu {})?;
                 std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {filename: resource_path})?;
             }
             Readers::File(csv_file) => {
                 let (filename, mut file) = csv_file;
-                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER DELIMITER '{delimeter}'")).context(PostgresSnafu {})?;
+                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'")).context(PostgresSnafu {})?;
                 std::io::copy(&mut file, &mut writer).context(IoSnafu {filename: resource_path})?;
                 file.flush().unwrap();
                 writer.finish().unwrap();
@@ -1713,6 +1774,20 @@ mod tests {
     }
 
     #[test]
+    fn test_csvs_all_types_to_sqlite() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        csvs_to_sqlite(
+            tmp.join("sqlite.db").to_string_lossy().into(),
+            vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
+        )
+        .unwrap();
+
+        assert!(tmp.join("sqlite.db").exists());
+    }
+
+    #[test]
     fn test_csvs_to_sqlite_large() {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
@@ -1827,6 +1902,49 @@ mod tests {
     }
 
     #[test]
+    fn test_parquet_all_types_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        csvs_to_parquet(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_xlsx_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        csvs_to_xlsx(
+            tmp.join("output.xlsx").to_string_lossy().into(),
+            vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
+        )
+        .unwrap();
+    }
+
+
+    #[test]
+    fn test_large_xlsx_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        csvs_to_xlsx(
+            tmp.join("output.xlsx").to_string_lossy().into(),
+            vec![
+                "fixtures/large/csv/data.csv".into(),
+                "fixtures/large/csv/daily_16.csv".into(),
+                "fixtures/large/csv/data_weather.csv".into(),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn test_xlsx() {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
@@ -1894,6 +2012,7 @@ mod tests {
             "postgresql://test@localhost/test".into(),
             vec![
                 "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
             ],
             options,
         )

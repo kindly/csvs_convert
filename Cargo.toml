@@ -1,12 +1,12 @@
 [package]
-name = "datapackage_convert"
-version = "0.6.1"
+name = "csvs_convert"
+version = "0.7.0"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
 license = "MIT"
-repository = "https://github.com/kindly/datapackage_convert"
-homepage = "https://github.com/kindly/datapackage_convert"
+repository = "https://github.com/kindly/csvs_convert"
+homepage = "https://github.com/kindly/csvs_convert"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

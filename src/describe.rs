@@ -20,7 +20,7 @@ pub enum DescribeError {
 
 
 
-pub fn describe_files(files: Vec<PathBuf>, mut output_dir: PathBuf, delimeter: Option<u8>, quote: Option<u8>) -> Result<Value, DescribeError> {
+pub fn describe_files(files: Vec<PathBuf>, mut output_dir: PathBuf, delimiter: Option<u8>, quote: Option<u8>) -> Result<Value, DescribeError> {
     let mut resources = vec![];
 
     for file in files {
@@ -29,24 +29,34 @@ pub fn describe_files(files: Vec<PathBuf>, mut output_dir: PathBuf, delimeter: O
         }
         let mut sniffer = csv_sniffer::Sniffer::new();
         sniffer.header(csv_sniffer::metadata::Header {has_header_row: true, num_preamble_rows: 0});
-        if let Some(delimeter) = delimeter {
+        if let Some(delimeter) = delimiter {
             sniffer.delimiter(delimeter);
         }
         if let Some(quote) = quote {
             sniffer.quote(csv_sniffer::metadata::Quote::Some(quote));
         }
 
+        let mut delimiter = delimiter.unwrap_or(b',');
+        let mut quote = quote.unwrap_or(b'"');
+
         let metadata = sniffer.sniff_reader(std::fs::File::open(&file)?);
 
-        let csv_reader = if metadata.is_ok() {
-            metadata.unwrap().dialect.open_reader(std::fs::File::open(&file)?)?
+        let csv_reader;
+
+        if let Ok(meta) = metadata {
+            delimiter = meta.dialect.delimiter;
+            if let csv_sniffer::metadata::Quote::Some(sniffer_quote) = meta.dialect.quote { 
+                quote = sniffer_quote;
+            }
+            csv_reader = meta.dialect.open_reader(std::fs::File::open(&file)?)?;
         } else {
             let mut reader_builder = csv::ReaderBuilder::new();
 
             reader_builder 
-                .delimiter(delimeter.unwrap_or(b','))
-                .quote(quote.unwrap_or(b'"'));
-            reader_builder.from_reader(std::fs::File::open(&file)?)
+                .delimiter(delimiter)
+                .quote(quote);
+
+            csv_reader = reader_builder.from_reader(std::fs::File::open(&file)?)
         };
 
         
@@ -65,13 +75,20 @@ pub fn describe_files(files: Vec<PathBuf>, mut output_dir: PathBuf, delimeter: O
         
         let file_no_extension = file_name.split(".").next();
 
+        let delimiter = String::from_utf8_lossy(&[delimiter]).to_string();
+        let quote = String::from_utf8_lossy(&[quote]).to_string();
+
         let resource = json!({
             "profile": "tabular-data-resource",
             "name": file_no_extension,
             "schema": {
                 "fields": fields_value
             },
-            "path": relative_path
+            "path": relative_path,
+            "dialect": {
+                "delimiter": delimiter,
+                "quoteChar": quote
+            }
         });
         resources.push(resource);
     }
@@ -98,7 +115,9 @@ mod tests {
     fn all_types() {
         let datapackage = describe_files(vec!["src/fixtures/all_types.csv".into()], "".into(), None, None).unwrap();
         insta::assert_yaml_snapshot!(datapackage);
-        let datapackage = describe_files(vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types.csv".into()], "src/fixtures".into(), None, None).unwrap();
+        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into()], "".into(), None, None).unwrap();
+        insta::assert_yaml_snapshot!(datapackage);
+        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into(), "src/fixtures/all_types.csv".into()], "src/fixtures".into(), None, None).unwrap();
         insta::assert_yaml_snapshot!(datapackage);
     }
 
