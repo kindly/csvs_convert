@@ -1,3 +1,23 @@
+//! Converts CSV files into XLSX/SQLITE/POSTGRESQL/PARQUET fast. 
+//!
+//! ## Aims
+
+//! * Thorough type guessing of CSV columns, so there is no need to configure types of each field. Scans whole file first to make sure all types in a column are consistent. Can detect over 30 date/time formats as well as JSON data.
+//! * Quick conversions/type guessing (uses rust underneath). Uses fast methods specific for each output format:
+//!     * `copy` for postgres
+//!     * Prepared statements for sqlite using c API.
+//!     * Arrow reader for parquet
+//!     * Write only mode for libxlsxwriter
+//! * Tries to limit errors when inserting data into database by resorting to "text" if type guessing can't determine a more specific type.
+//! * When inserting into existing databases automatically migrate schema of target to allow for new data (`evolve` option).
+//! * Memory efficient. All csvs and outputs are streamed so all conversions should take up very little memory.
+//! * Gather stats and information about CSV files into datapacakge.json file which can use it for customizing conversion.
+//! 
+//! ## Drawbacks
+//! 
+//! * CSV files currently need header rows.
+//! * Whole file needs to be on disk as whole CSV is analyzed therefore files are read twice.
+
 mod zip_dir;
 mod describe;
 mod describe_csv;
