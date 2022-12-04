@@ -2038,7 +2038,7 @@ mod tests {
 
     #[test]
     fn test_db_large() {
-        let options = Options::builder().drop(true).schema("test".into()).build();
+        let options = Options::builder().drop(true).schema("large_test".into()).build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
