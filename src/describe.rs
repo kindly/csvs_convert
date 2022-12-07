@@ -5,11 +5,11 @@ use pathdiff::diff_paths;
 use thiserror::Error;
 use serde_json::{json, Value};
 use typed_builder::TypedBuilder;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 #[derive(Error, Debug)]
 pub enum DescribeError {
-    #[error("Error detecting csv file")]
-    SnifferError(#[from] csv_sniffer::error::SnifferError),
     #[error("Could not write datapackage.json, check directory exists.")]
     WriteError(#[from] std::io::Error),
     #[error("Error writing datapackage.json.")]
@@ -29,39 +29,43 @@ pub struct Options {
     pub stats: bool,
 }
 
+fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
+    let file = File::open(file)?;
+    let reader = BufReader::new(file);
+
+    let mut top_10 = String::new();
+
+    for line in reader.lines().take(10) {
+        top_10.push_str(&line?)
+    }
+
+    let mut found = b',';
+
+    for char in top_10.as_bytes() {
+        if [b',', b'\t', b'|', b';', b':'].contains(char) {
+            found = *char;
+            break
+        }
+    }
+    return Ok(found)
+}
 
 pub fn get_csv_reader(file: PathBuf, options: &Options) -> Result<(csv::Reader<std::fs::File>, u8, u8), DescribeError>{
 
-    let mut sniffer = csv_sniffer::Sniffer::new();
-    sniffer.header(csv_sniffer::metadata::Header {has_header_row: true, num_preamble_rows: 0});
-    if let Some(delimeter) = options.delimiter {
-        sniffer.delimiter(delimeter);
-    }
-    if let Some(quote) = options.quote {
-        sniffer.quote(csv_sniffer::metadata::Quote::Some(quote));
-    }
-
     let mut delimiter = options.delimiter.unwrap_or(b',');
-    let mut quote = options.quote.unwrap_or(b'"');
+    let quote = options.quote.unwrap_or(b'"');
 
-    let metadata = sniffer.sniff_reader(std::fs::File::open(&file)?);
+    if options.delimiter.is_none() {
+        delimiter = simple_sniff(&file)?
+    } 
 
-    if let Ok(meta) = metadata {
-        delimiter = meta.dialect.delimiter;
-        if let csv_sniffer::metadata::Quote::Some(sniffer_quote) = meta.dialect.quote { 
-            quote = sniffer_quote;
-        }
-        Ok((meta.dialect.open_reader(std::fs::File::open(&file)?)?, delimiter, quote))
-    } else {
-        let mut reader_builder = csv::ReaderBuilder::new();
+    let mut reader_builder = csv::ReaderBuilder::new();
 
-        reader_builder 
-            .delimiter(delimiter)
-            .quote(quote);
+    reader_builder 
+        .delimiter(delimiter)
+        .quote(quote);
 
-        Ok((reader_builder.from_reader(std::fs::File::open(&file)?), delimiter, quote))
-    }
-
+    Ok((reader_builder.from_reader(std::fs::File::open(&file)?), delimiter, quote))
 }
 
 
@@ -164,10 +168,25 @@ mod tests {
         insta::assert_yaml_snapshot!(value);
     }
 
+    #[test]
+    fn test_tab() {
+        let options = Options::builder().build();
+        let describe = describe_files(vec!["fixtures/tab_delimited.csv".into()], "".into(), &options).unwrap();
+        insta::assert_yaml_snapshot!(describe);
+    }
+
+    #[test]
+    fn test_semi_colon() {
+        let options = Options::builder().build();
+        let describe = describe_files(vec!["fixtures/semi_colon.csv".into()], "".into(), &options).unwrap();
+        insta::assert_yaml_snapshot!(describe);
+    }
+
     // #[test]
     // fn large_file_basic() {
-    //      let describe = describe_files(vec!["rows_small.csv".into()], "".into(),true, Some(b','), Some(b'"')).unwrap();
-    //      insta::assert_yaml_snapshot!(describe);
+    //     let options = Options::builder().build();
+    //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
+    //     insta::assert_yaml_snapshot!(describe);
     // }
 
 }
