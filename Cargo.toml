@@ -34,6 +34,9 @@ regex = "1.6.0"
 postgres = "0.19.3"
 tempdir = "0.3.7"
 thiserror = "1.0.35"
+pdatastructs = "0.7.0"
+streaming-stats = "0.2.3"
+counter = "0.5.7"
 
 [dev-dependencies]
 insta = { version = "1.17.1", features = ["redactions"] }

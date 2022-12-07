@@ -1,5 +1,12 @@
+use pdatastructs::hyperloglog::HyperLogLog;
+use pdatastructs::tdigest;
+use stats::OnlineStats;
+use pdatastructs::num_traits::ToPrimitive;
+
 use chrono::prelude::*;
 use chrono::DateTime;
+
+use serde_json::json;
 
 fn descriptions() -> Vec<(&'static str, &'static str)> {
     let mut output = vec![
@@ -120,19 +127,41 @@ fn time_formats() -> Vec<&'static str> {
 
 #[derive(Debug)]
 pub struct Describer {
-    count: usize,
-    empty_count: usize,
+    pub count: usize,
+    pub empty_count: usize,
     descriptions: Vec<(&'static str, &'static str)>,
-    to_delete: Vec<usize> 
+    pub calculate_stats: bool,
+    to_delete: Vec<usize>,
+    no_string_stats: bool,
+    pub unique_to_large: bool,
+    pub string_freq: counter::Counter<String>,
+    pub max_len: usize,
+    pub min_len: usize,
+    pub minmax_str: stats::MinMax<Vec<u8>>,
+    pub loglog: HyperLogLog<str>,
+    pub tdigest: tdigest::TDigest<tdigest::K1>,
+    pub stats: OnlineStats
 }
 
 impl Describer {
     pub fn new() -> Describer {
+        let scale_function = tdigest::K1::new(100.into());
+
         return Describer {
             count: 0,
             empty_count: 0,
             descriptions: descriptions(),
-            to_delete: vec![]
+            to_delete: vec![],
+            calculate_stats: true,
+            no_string_stats: false,
+            unique_to_large: false,
+            string_freq: counter::Counter::new(),
+            max_len: 0,
+            min_len: 0,
+            minmax_str: stats::MinMax::new(),
+            loglog: HyperLogLog::new(12),
+            tdigest: tdigest::TDigest::new(scale_function, 1000),
+            stats: OnlineStats::new()
         }
     }
 
@@ -178,13 +207,94 @@ impl Describer {
         return ("string", "string".to_owned())
     }
 
-    pub fn process(&mut self, string: &str){
-        self.count += 1;
+    pub fn stats(&mut self) -> serde_json::Value {
 
+        if !self.calculate_stats {
+            return serde_json::json!({})
+        }
+
+        let top_20 = self.string_freq.k_most_common_ordered(20);
+
+        let mut deciles = vec![];
+        for i in 1..10 {
+            let i = f64::from(i) * 0.1;
+            deciles.push(self.tdigest.quantile(i));
+        };
+        let deciles = if self.tdigest.is_empty() {None} else {Some(deciles)};
+
+        let mut centiles = vec![];
+        for i in 1..100 {
+            let i = f64::from(i) * 0.01;
+            centiles.push(self.tdigest.quantile(i));
+        };
+        let centiles = if self.tdigest.is_empty() {None} else {Some(centiles)};
+
+        let empty = vec![];
+        let min_string = String::from_utf8_lossy(&self.minmax_str.min().unwrap_or(&empty)).to_string();
+        let max_string = String::from_utf8_lossy(&self.minmax_str.max().unwrap_or(&empty)).to_string();
+
+        let is_number = ["number", "integer"].contains(&self.guess_type().0);
+
+        json!({
+            "min_len": self.min_len,
+            "max_len": self.max_len,
+            "min_str": if min_string.is_empty() {None} else {Some(min_string)},
+            "max_str": if max_string.is_empty() {None} else {Some(max_string)},
+            "count": self.count,
+            "empty_count": self.empty_count,
+            "exact_unique": if self.string_freq.len() == 0 {None} else {Some(self.string_freq.len())}, 
+            "estimate_unique": if self.string_freq.len() == 0 {Some(self.loglog.count())} else {None},
+            "top_20": if top_20.is_empty() {None} else {Some(top_20)},
+            "sum": if !is_number {None} else {Some(self.stats.mean() * self.stats.len().to_f64().unwrap_or(0_f64))},
+            "mean": if !is_number {None} else {Some(self.stats.mean())},
+            "variance": if !is_number {None} else {Some(self.stats.variance())},
+            "stddev": if !is_number {None} else {Some(self.stats.stddev())},
+            "min_number": if self.tdigest.is_empty() {None} else {Some(self.tdigest.min())},
+            "max_number": if self.tdigest.is_empty() {None} else {Some(self.tdigest.max())},
+            "median": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.5))},
+            "lower_quartile": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.25))},
+            "upper_quartile": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.75))},
+            "deciles": deciles,
+            "centiles": centiles,
+        })
+
+    }
+
+    pub fn process(&mut self, string: &str){
         if string.is_empty() {
             self.empty_count += 1;
             return
         }
+        self.count += 1;
+
+        if self.calculate_stats {
+            if self.max_len == 0 {
+                self.max_len = string.len();
+                self.min_len = string.len();
+            }
+
+            self.max_len = std::cmp::max(self.max_len, string.len());
+            self.min_len = std::cmp::min(self.min_len, string.len());
+
+            self.minmax_str.add(string.as_bytes().to_vec());
+
+            self.loglog.add(string);
+
+            if !self.no_string_stats {
+                if string.len() > 100 {
+                    self.no_string_stats = true;
+                    self.string_freq.clear();
+                } else if !self.unique_to_large {
+                    self.string_freq.update([string.into()]);
+                    if self.string_freq.len() > 200 {
+                        self.unique_to_large = true;
+                        self.no_string_stats = true;
+                        self.string_freq.clear();
+                    }
+                }
+            }
+        }
+
 
         for num in 0usize..self.descriptions.len() {
             let (type_name, type_description) = self.descriptions[num];
@@ -202,8 +312,14 @@ impl Describer {
             }
 
             if type_name == "number" {
-                if !self.check_number(string) {
-                    self.to_delete.push(num)
+                if let Some(number) = self.check_number(string) {
+                    if self.calculate_stats && !number.is_nan() {
+                        self.tdigest.insert(number);
+                        self.stats.add(number);
+                    }
+                } else {
+                    self.to_delete.push(num);
+                    self.tdigest.clear();
                 }
             }
 
@@ -259,12 +375,8 @@ impl Describer {
         }
     }
 
-    fn check_number(&mut self, string: &str) -> bool {
-        if let Ok(_) = string.parse::<f64>() {
-            true
-        } else {
-            false
-        }
+    fn check_number(&mut self, string: &str) -> Option<f64> {
+        string.parse().ok()
     }
 
     fn check_boolean(&mut self, string: &str) -> bool {
@@ -506,6 +618,54 @@ mod tests {
         describer.process("moo");
         assert_eq!(describer.guess_type().0, "string");
         assert_eq!(describer.empty_count, 3);
+    }
+
+    #[test]
+    fn stats_string() {
+        let mut describer = Describer::new();
+        describer.process("a");
+        describer.process("b");
+        describer.process("c");
+        describer.process("c");
+        insta::assert_debug_snapshot!(describer.stats());
+    }
+
+    #[test]
+    fn stats_string_too_many_unique() {
+        let mut describer = Describer::new();
+        for i in 0..1001 {
+            describer.process(&format!("num-{i}"))
+        }
+        assert_eq!(describer.loglog.count(), 1012);
+        insta::assert_debug_snapshot!(describer.stats());
+
+    }
+
+    #[test]
+    fn stats_string_too_long() {
+        let mut describer = Describer::new();
+        let mut long = String::new();
+        for _ in 0..101 {
+            long.push('a');
+        }
+        describer.process("a");
+        describer.process(&long);
+        insta::assert_debug_snapshot!(describer.stats());
+    }
+
+    #[test]
+    fn stats_number() {
+        let mut describer = Describer::new();
+
+        for num in 0..1001 {
+            describer.process(&num.to_string())
+        }
+
+        insta::assert_debug_snapshot!(describer.stats());
+
+        describer.process("a");
+        
+        insta::assert_debug_snapshot!(describer.stats());
     }
 
     // #[test]

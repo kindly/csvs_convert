@@ -1,0 +1,40 @@
+---
+source: src/describer.rs
+expression: describer.stats()
+---
+Object({
+    "min_len": Number(
+        5,
+    ),
+    "max_len": Number(
+        8,
+    ),
+    "min_str": String(
+        "num-0",
+    ),
+    "max_str": String(
+        "num-999",
+    ),
+    "count": Number(
+        1001,
+    ),
+    "empty_count": Number(
+        0,
+    ),
+    "exact_unique": Null,
+    "estimate_unique": Number(
+        1012,
+    ),
+    "top_20": Null,
+    "sum": Null,
+    "mean": Null,
+    "variance": Null,
+    "stddev": Null,
+    "min_number": Null,
+    "max_number": Null,
+    "median": Null,
+    "lower_quartile": Null,
+    "upper_quartile": Null,
+    "deciles": Null,
+    "centiles": Null,
+})

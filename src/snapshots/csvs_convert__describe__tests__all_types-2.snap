@@ -6,6 +6,7 @@ profile: tabular-data-package
 resources:
   - profile: tabular-data-resource
     name: all_types_semi_colon
+    row_count: 2
     schema:
       fields:
         - name: string
