@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use pathdiff::diff_paths;
 use thiserror::Error;
 use serde_json::{json, Value};
-
+use typed_builder::TypedBuilder;
 
 #[derive(Error, Debug)]
 pub enum DescribeError {
@@ -18,19 +18,31 @@ pub enum DescribeError {
     FileNotExist(String),
 }
 
-pub fn get_csv_reader(file: PathBuf, delimiter: Option<u8>, quote: Option<u8>) -> Result<(csv::Reader<std::fs::File>, u8, u8), DescribeError>{
+
+#[derive(Default, Debug, TypedBuilder)]
+pub struct Options {
+    #[builder(default)]
+    pub delimiter: Option<u8>,
+    #[builder(default)]
+    pub quote: Option<u8>,
+    #[builder(default)]
+    pub stats: bool,
+}
+
+
+pub fn get_csv_reader(file: PathBuf, options: &Options) -> Result<(csv::Reader<std::fs::File>, u8, u8), DescribeError>{
 
     let mut sniffer = csv_sniffer::Sniffer::new();
     sniffer.header(csv_sniffer::metadata::Header {has_header_row: true, num_preamble_rows: 0});
-    if let Some(delimeter) = delimiter {
+    if let Some(delimeter) = options.delimiter {
         sniffer.delimiter(delimeter);
     }
-    if let Some(quote) = quote {
+    if let Some(quote) = options.quote {
         sniffer.quote(csv_sniffer::metadata::Quote::Some(quote));
     }
 
-    let mut delimiter = delimiter.unwrap_or(b',');
-    let mut quote = quote.unwrap_or(b'"');
+    let mut delimiter = options.delimiter.unwrap_or(b',');
+    let mut quote = options.quote.unwrap_or(b'"');
 
     let metadata = sniffer.sniff_reader(std::fs::File::open(&file)?);
 
@@ -53,7 +65,7 @@ pub fn get_csv_reader(file: PathBuf, delimiter: Option<u8>, quote: Option<u8>) -
 }
 
 
-pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, with_stats: bool, delimiter: Option<u8>, quote: Option<u8>) -> Result<Value, DescribeError>{
+pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) -> Result<Value, DescribeError>{
 
     if !file.exists() {
         return Err(DescribeError::FileNotExist(file.to_string_lossy().into()))
@@ -63,9 +75,9 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, with_stats: bool, d
         output_dir.push(".");
     }
 
-    let (csv_reader, delimiter, quote) = get_csv_reader(file.clone(), delimiter, quote)?;
+    let (csv_reader, delimiter, quote) = get_csv_reader(file.clone(), options)?;
 
-    let mut describe_value = describe_csv(csv_reader, with_stats);
+    let mut describe_value = describe_csv(csv_reader, options.stats);
 
     let fields_value = describe_value["fields"].take();
 
@@ -99,11 +111,11 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, with_stats: bool, d
 }
 
 
-pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, with_stats: bool, delimiter: Option<u8>, quote: Option<u8>) -> Result<Value, DescribeError> {
+pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, options: &Options) -> Result<Value, DescribeError> {
     let mut resources = vec![];
 
     for file in files {
-        let resource = describe_file(file, output_dir.clone(), with_stats, delimiter, quote)?;
+        let resource = describe_file(file, output_dir.clone(), options)?;
         resources.push(resource);
     }
     let datapackage = json!({
@@ -115,8 +127,8 @@ pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, with_stats: bool
 }
 
 
-pub fn output_datapackage(files: Vec<PathBuf>, output_dir: PathBuf, with_stats: bool, delimeter: Option<u8>, quote: Option<u8>) -> Result<(), DescribeError> {
-    let datapackage = describe_files(files, output_dir.clone(), with_stats ,delimeter, quote)?;
+pub fn output_datapackage(files: Vec<PathBuf>, output_dir: PathBuf, options: &Options) -> Result<(), DescribeError> {
+    let datapackage = describe_files(files, output_dir.clone(), options)?;
     let file = std::fs::File::create(output_dir.join("datapackage.json"))?;
     serde_json::to_writer_pretty(file, &datapackage)?;
     Ok(())
@@ -128,11 +140,12 @@ mod tests {
 
     #[test]
     fn all_types() {
-        let datapackage = describe_files(vec!["src/fixtures/all_types.csv".into()], "".into(), false, None, None).unwrap();
+        let options = Options::builder().build();
+        let datapackage = describe_files(vec!["src/fixtures/all_types.csv".into()], "".into(), &options).unwrap();
         insta::assert_yaml_snapshot!(datapackage);
-        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into()], "".into(), false, None, None).unwrap();
+        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into()], "".into(), &options).unwrap();
         insta::assert_yaml_snapshot!(datapackage);
-        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into(), "src/fixtures/all_types.csv".into()], "src/fixtures".into(), false, None, None).unwrap();
+        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into(), "src/fixtures/all_types.csv".into()], "src/fixtures".into(), &options).unwrap();
         insta::assert_yaml_snapshot!(datapackage);
     }
 
@@ -141,10 +154,11 @@ mod tests {
         let tmpdir = tempdir::TempDir::new("").unwrap();
         let path = tmpdir.into_path();
         let input_file = path.join("all_types.csv");
+        let options = Options::builder().build();
 
         std::fs::copy("src/fixtures/all_types.csv", &input_file).unwrap();
 
-        output_datapackage(vec![input_file], path.clone(), false, None, None).unwrap();
+        output_datapackage(vec![input_file], path.clone(), &options).unwrap();
         let reader = std::fs::File::open(path.join("datapackage.json")).unwrap();
         let value: serde_json::Value = serde_json::from_reader(reader).unwrap();
         insta::assert_yaml_snapshot!(value);
