@@ -1,5 +1,5 @@
 pub use crate::describer::Describer;
-pub use crate::describe_csv::describe as describe_csv;
+pub use crate::describe_csv::{describe as describe_csv, describe_parallel, describe_parallel_rows};
 use std::path::PathBuf;
 use pathdiff::diff_paths;
 use thiserror::Error;
@@ -20,7 +20,6 @@ pub enum DescribeError {
     CSVRead(#[from] csv::Error),
 }
 
-
 #[derive(Default, Debug, TypedBuilder)]
 pub struct Options {
     #[builder(default)]
@@ -31,6 +30,8 @@ pub struct Options {
     pub stats: bool,
     #[builder(default)]
     pub stats_csv: String,
+    #[builder(default = 1)]
+    pub threads: usize,
 }
 
 fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
@@ -85,7 +86,12 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) 
 
     let (csv_reader, delimiter, quote) = get_csv_reader(file.clone(), options)?;
 
-    let mut describe_value = describe_csv(csv_reader, options.stats || !options.stats_csv.is_empty())?;
+    let mut describe_value = if options.threads > 1 {
+        //describe_parallel(csv_reader, options.stats, options.threads)
+        describe_parallel_rows(csv_reader, options.stats || !options.stats_csv.is_empty())
+    } else {
+        describe_csv(csv_reader, options.stats || !options.stats_csv.is_empty())
+    };
 
     let fields_value = describe_value["fields"].take();
 
@@ -265,6 +271,20 @@ mod tests {
     //     let options = Options::builder().stats_csv("moo.csv".into()).build();
     //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
     //     insta::assert_yaml_snapshot!(describe);
+    // }
+    // #[test]
+    // fn large_file_basic() {
+    //     let options = Options::builder().stats(true).build();
+    //     println!("{options:?}");
+    //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
+    //     //insta::assert_yaml_snapshot!(describe);
+    // }
+
+    // #[test]
+    // fn large_file_basic_multi() {
+    //     let options = Options::builder().stats(true).threads(2).build();
+    //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
+    //     //insta::assert_yaml_snapshot!(describe);
     // }
 
 }
