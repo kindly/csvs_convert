@@ -16,6 +16,8 @@ pub enum DescribeError {
     WriteJSONError(#[from] serde_json::Error),
     #[error("File {0} does not exist")]
     FileNotExist(String),
+    #[error("Error Reading CSV file")]
+    CSVRead(#[from] csv::Error),
 }
 
 
@@ -81,7 +83,7 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) 
 
     let (csv_reader, delimiter, quote) = get_csv_reader(file.clone(), options)?;
 
-    let mut describe_value = describe_csv(csv_reader, options.stats);
+    let mut describe_value = describe_csv(csv_reader, options.stats)?;
 
     let fields_value = describe_value["fields"].take();
 

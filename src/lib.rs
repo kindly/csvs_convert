@@ -152,7 +152,7 @@ lazy_static::lazy_static! {
     pub static ref INVALID_REGEX: regex::Regex = regex::RegexBuilder::new(r"[\000-\010]|[\013-\014]|[\016-\037]")
         .octal(true)
         .build()
-        .unwrap();
+        .expect("we know the regex is fine");
 }
 
 fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error> {
@@ -167,7 +167,7 @@ fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error> {
     );
 
     let mut new_fields = serde_json::Map::new();
-    for field in fields_option.unwrap().drain(..) {
+    for field in fields_option.expect("we checked above").drain(..) {
         let name_option = field["name"].as_str();
         ensure!(
             name_option.is_some(),
@@ -175,12 +175,12 @@ fn make_mergeable_resource(mut resource: Value) -> Result<Value, Error> {
                 message: "Each field needs a name"
             }
         );
-        new_fields.insert(name_option.unwrap().to_owned(), field);
+        new_fields.insert(name_option.expect("we checked above").to_owned(), field);
     }
 
     resource["schema"]
         .as_object_mut()
-        .unwrap()
+        .expect("we know its an obj")
         .insert("fields".to_string(), new_fields.into());
 
     Ok(resource)
@@ -198,7 +198,7 @@ fn make_mergeable_datapackage(mut value: Value) -> Result<Value, Error> {
     );
 
     let mut new_resources = serde_json::Map::new();
-    for resource in resources_option.unwrap().drain(..) {
+    for resource in resources_option.expect("checked above").drain(..) {
         let path;
         {
             let path_str = resource["path"].as_str();
@@ -208,7 +208,7 @@ fn make_mergeable_datapackage(mut value: Value) -> Result<Value, Error> {
                     message: "datapackage resource needs a name or path"
                 }
             );
-            path = path_str.unwrap().to_owned();
+            path = path_str.expect("we checked above").to_owned();
         }
 
         let new_resource = make_mergeable_resource(resource)?;
@@ -217,7 +217,7 @@ fn make_mergeable_datapackage(mut value: Value) -> Result<Value, Error> {
 
     value
         .as_object_mut()
-        .unwrap()
+        .expect("we know its an obj")
         .insert("resources".into(), new_resources.into());
 
     Ok(value)
@@ -229,14 +229,14 @@ fn make_datapackage_from_mergeable(mut value: Value) -> Result<Value, Error> {
     let resources_option = resources.as_object_mut();
 
     let mut new_resources = vec![];
-    for resource in resources_option.unwrap().values_mut() {
+    for resource in resources_option.expect("we know its an obj").values_mut() {
         let new_resource = make_resource_from_mergable(resource.clone())?;
         new_resources.push(new_resource);
     }
 
     value
         .as_object_mut()
-        .unwrap()
+        .expect("we know its an obj")
         .insert("resources".into(), new_resources.into());
 
     Ok(value)
@@ -247,13 +247,13 @@ fn make_resource_from_mergable(mut resource: Value) -> Result<Value, Error> {
     let fields_option = fields.as_object_mut();
 
     let mut new_fields = vec![];
-    for field in fields_option.unwrap().values_mut() {
+    for field in fields_option.expect("we know its an obj").values_mut() {
         new_fields.push(field.clone());
     }
 
     resource["schema"]
         .as_object_mut()
-        .unwrap()
+        .expect("we know its an obj")
         .insert("fields".to_string(), new_fields.into());
 
     Ok(resource)
@@ -291,14 +291,14 @@ fn datapackage_json_to_value(filename: &str) -> Result<Value, Error> {
 fn merge_datapackage_json(mut base: Value, mut merger: Value) -> Result<Value, Error> {
     let merger_resources_value = merger["resources"].take();
 
-    let merger_resources = merger_resources_value.as_object().unwrap();
-    let base_resources = base["resources"].as_object_mut().unwrap();
+    let merger_resources = merger_resources_value.as_object().expect("we know its an obj");
+    let base_resources = base["resources"].as_object_mut().expect("we know its an obj");
 
     for (resource, resource_value) in merger_resources {
         if !base_resources.contains_key(resource) {
             base_resources.insert(resource.clone(), resource_value.clone());
         } else {
-            for (field, field_value) in resource_value["schema"]["fields"].as_object().unwrap() {
+            for (field, field_value) in resource_value["schema"]["fields"].as_object().expect("we know its an obj") {
                 ensure!(
                     field_value.is_object(),
                     DatapackageMergeSnafu {
@@ -308,7 +308,7 @@ fn merge_datapackage_json(mut base: Value, mut merger: Value) -> Result<Value, E
 
                 let base_fields = base_resources[resource]["schema"]["fields"]
                     .as_object_mut()
-                    .unwrap();
+                    .expect("we know its an obj");
 
                 if !base_fields.contains_key(field) {
                     base_fields.insert(field.clone(), field_value.clone());
@@ -319,7 +319,7 @@ fn merge_datapackage_json(mut base: Value, mut merger: Value) -> Result<Value, E
                             message: "Each field needs to be an object"
                         }
                     );
-                    let base_fieldinfo = base_fields[field].as_object_mut().unwrap();
+                    let base_fieldinfo = base_fields[field].as_object_mut().expect("we know its an obj");
 
                     let base_type = base_fieldinfo["type"].as_str().unwrap_or_default();
                     let field_type = field_value["type"].as_str().unwrap_or_default();
@@ -378,7 +378,7 @@ fn write_merged_csv(
         let row = row.context(CSVRowSnafu {})?;
         for item in &output_map {
             match item {
-                Some(index) => output_row.push(row.get(*index).unwrap()),
+                Some(index) => output_row.push(row.get(*index).expect("index should exist")),
                 None => output_row.push(""),
             }
         }
@@ -489,7 +489,7 @@ pub fn merge_datapackage_with_options(
     let mut csv_outputs = HashMap::new();
     let mut output_fields = HashMap::new();
 
-    for resource in merged_datapackage_json["resources"].as_array_mut().unwrap() {
+    for resource in merged_datapackage_json["resources"].as_array_mut().expect("we know its an array") {
         let mut field_order_map = serde_json::Map::new();
         let mut fields: Vec<String> = Vec::new();
         for (index, field) in resource["schema"]["fields"]
@@ -498,12 +498,12 @@ pub fn merge_datapackage_with_options(
             .iter()
             .enumerate()
         {
-            let name = field["name"].as_str().unwrap();
+            let name = field["name"].as_str().expect("we know its a string");
             field_order_map.insert(name.into(), index.into());
             fields.push(name.to_owned());
         }
 
-        let resource_path = resource["path"].as_str().unwrap().to_owned();
+        let resource_path = resource["path"].as_str().expect("we know its a string").to_owned();
 
         let mut full_path = path.join(&resource_path);
         full_path.pop();
@@ -523,7 +523,7 @@ pub fn merge_datapackage_with_options(
 
         resource
             .as_object_mut()
-            .unwrap()
+            .expect("we know its a obj")
             .insert("field_order_map".into(), field_order_map.into());
     }
 
