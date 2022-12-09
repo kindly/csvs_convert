@@ -12,30 +12,459 @@ resources:
         - name: string
           type: string
           format: string
+          stats:
+            min_len: 3
+            max_len: 3
+            min_str: "122"
+            max_str: foo
+            count: 2
+            empty_count: 0
+            exact_unique: 2
+            estimate_unique: ~
+            top_20:
+              - - "122"
+                - 1
+              - - foo
+                - 1
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: array
           type: array
           format: array
+          stats:
+            min_len: 5
+            max_len: 5
+            min_str: "[4,5]"
+            max_str: "[4,9]"
+            count: 2
+            empty_count: 0
+            exact_unique: 2
+            estimate_unique: ~
+            top_20:
+              - - "[4,5]"
+                - 1
+              - - "[4,9]"
+                - 1
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: object
           type: object
           format: object
+          stats:
+            min_len: 9
+            max_len: 9
+            min_str: "{\"a\":\"b\"}"
+            max_str: "{\"c\":\"b\"}"
+            count: 2
+            empty_count: 0
+            exact_unique: 2
+            estimate_unique: ~
+            top_20:
+              - - "{\"a\":\"b\"}"
+                - 1
+              - - "{\"c\":\"b\"}"
+                - 1
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: date
           type: date
           format: "%Y-%m-%d"
+          stats:
+            min_len: 10
+            max_len: 10
+            min_str: 2005-01-12
+            max_str: 2005-01-12
+            count: 2
+            empty_count: 0
+            exact_unique: 1
+            estimate_unique: ~
+            top_20:
+              - - 2005-01-12
+                - 2
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: datetime
           type: datetime
           format: "%Y-%m-%d %H:%M"
+          stats:
+            min_len: 16
+            max_len: 16
+            min_str: "2005-01-12 20:20"
+            max_str: "2005-01-12 20:20"
+            count: 2
+            empty_count: 0
+            exact_unique: 1
+            estimate_unique: ~
+            top_20:
+              - - "2005-01-12 20:20"
+                - 2
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: time
           type: time
           format: "%H:%M"
+          stats:
+            min_len: 5
+            max_len: 5
+            min_str: "12:12"
+            max_str: "12:12"
+            count: 2
+            empty_count: 0
+            exact_unique: 1
+            estimate_unique: ~
+            top_20:
+              - - "12:12"
+                - 2
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: boolean
           type: boolean
           format: boolean
+          stats:
+            min_len: 4
+            max_len: 4
+            min_str: "true"
+            max_str: "true"
+            count: 2
+            empty_count: 0
+            exact_unique: 1
+            estimate_unique: ~
+            top_20:
+              - - "true"
+                - 2
+            sum: ~
+            mean: ~
+            variance: ~
+            stddev: ~
+            min_number: ~
+            max_number: ~
+            median: ~
+            lower_quartile: ~
+            upper_quartile: ~
+            deciles: ~
+            centiles: ~
         - name: number
           type: number
           format: number
+          stats:
+            min_len: 4
+            max_len: 4
+            min_str: "23.3"
+            max_str: "23.3"
+            count: 2
+            empty_count: 0
+            exact_unique: 1
+            estimate_unique: ~
+            top_20:
+              - - "23.3"
+                - 2
+            sum: 46.6
+            mean: 23.3
+            variance: 0.0
+            stddev: 0.0
+            min_number: 23.3
+            max_number: 23.3
+            median: 23.3
+            lower_quartile: 23.3
+            upper_quartile: 23.3
+            deciles:
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+            centiles:
+              - 23.299999999999997
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.300000000000004
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.299999999999997
+              - 23.300000000000004
+              - 23.299999999999997
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.299999999999997
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.300000000000004
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.299999999999997
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.300000000000004
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.3
+              - 23.300000000000004
+              - 23.300000000000004
+              - 23.3
+              - 23.3
+              - 23.299999999999997
+              - 23.299999999999997
+              - 23.300000000000004
+              - 23.3
+              - 23.3
         - name: integer
           type: integer
           format: integer
+          stats:
+            min_len: 2
+            max_len: 2
+            min_str: "23"
+            max_str: "23"
+            count: 2
+            empty_count: 0
+            exact_unique: 1
+            estimate_unique: ~
+            top_20:
+              - - "23"
+                - 2
+            sum: 46.0
+            mean: 23.0
+            variance: 0.0
+            stddev: 0.0
+            min_number: 23.0
+            max_number: 23.0
+            median: 23.0
+            lower_quartile: 23.0
+            upper_quartile: 23.0
+            deciles:
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+            centiles:
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.000000000000004
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.000000000000004
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 22.999999999999996
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.0
+              - 23.000000000000004
+              - 23.0
+              - 23.0
     path: all_types.csv
     dialect:
       delimiter: ","

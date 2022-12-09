@@ -29,6 +29,8 @@ pub struct Options {
     pub quote: Option<u8>,
     #[builder(default)]
     pub stats: bool,
+    #[builder(default)]
+    pub stats_csv: String,
 }
 
 fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
@@ -83,7 +85,7 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) 
 
     let (csv_reader, delimiter, quote) = get_csv_reader(file.clone(), options)?;
 
-    let mut describe_value = describe_csv(csv_reader, options.stats)?;
+    let mut describe_value = describe_csv(csv_reader, options.stats || !options.stats_csv.is_empty())?;
 
     let fields_value = describe_value["fields"].take();
 
@@ -129,6 +131,10 @@ pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, options: &Option
         "resources": resources
     });
 
+    if !options.stats_csv.is_empty() {
+        datapackage_to_stats_csv(&datapackage, options.stats_csv.clone().into())?;
+    }
+
     Ok(datapackage)
 }
 
@@ -139,6 +145,64 @@ pub fn output_datapackage(files: Vec<PathBuf>, output_dir: PathBuf, options: &Op
     serde_json::to_writer_pretty(file, &datapackage)?;
     Ok(())
 }
+
+fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf) -> Result<(), DescribeError> {
+    let resources_option = datapackage["resources"].as_array();
+
+    let resources = resources_option.expect("we made the datapackage so key should be there");
+    let core_fields = ["table", "field", "type", "format"];
+    let stats_fields = [
+        "min_len",
+        "max_len",
+        "min_str",
+        "max_str",
+        "count",
+        "empty_count",
+        "exact_unique",
+        "estimate_unique",
+        "sum",
+        "mean",
+        "variance",
+        "stddev",
+        "min_number",
+        "max_number",
+        "median",
+        "lower_quartile",
+        "upper_quartile",
+        "deciles"
+    ];
+    let mut all_fields = core_fields.to_vec();
+    all_fields.append(&mut stats_fields.to_vec());
+
+    let mut writer = csv::Writer::from_path(path)?;
+    writer.write_record(all_fields)?;
+
+    for resource in resources {
+        if let Some(fields) = resource["schema"]["fields"].as_array() {
+            for field in fields {
+                let mut row = vec![];
+                row.push(resource["name"].as_str().unwrap_or("").to_string());
+                row.push(field["name"].as_str().unwrap_or("").to_string());
+                row.push(field["type"].as_str().unwrap_or("").to_string());
+                row.push(field["format"].as_str().unwrap_or("").to_string());
+                for stat in stats_fields {
+                    let value = match field["stats"].get(stat).unwrap() {
+                        Value::Null => {"".to_string()},
+                        Value::String(a) => {a.to_owned()},
+                        Value::Bool(a) => {a.to_string()},
+                        Value::Number(a) => {a.to_string()},
+                        Value::Array(a) => {serde_json::to_string(&a).expect("was json already")},
+                        Value::Object(a) => {serde_json::to_string(&a).expect("was json already")}
+                    };
+                    row.push(value)
+                }
+                writer.write_record(row)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -160,7 +224,7 @@ mod tests {
         let tmpdir = tempdir::TempDir::new("").unwrap();
         let path = tmpdir.into_path();
         let input_file = path.join("all_types.csv");
-        let options = Options::builder().build();
+        let options = Options::builder().stats_csv(path.join("stats.csv").to_string_lossy().into()).build();
 
         std::fs::copy("src/fixtures/all_types.csv", &input_file).unwrap();
 
@@ -168,6 +232,18 @@ mod tests {
         let reader = std::fs::File::open(path.join("datapackage.json")).unwrap();
         let value: serde_json::Value = serde_json::from_reader(reader).unwrap();
         insta::assert_yaml_snapshot!(value);
+
+        let mut rows = vec![];
+
+        let mut csv_reader = csv::Reader::from_path(path.join("stats.csv")).unwrap();
+
+        rows.push(csv_reader.headers().unwrap().iter().map(|a| {a.to_string()}).collect());
+
+        for row in csv_reader.deserialize() {
+            let row: Vec<String> = row.unwrap();
+            rows.push(row);
+        }
+        insta::assert_yaml_snapshot!(rows);
     }
 
     #[test]
@@ -186,7 +262,7 @@ mod tests {
 
     // #[test]
     // fn large_file_basic() {
-    //     let options = Options::builder().build();
+    //     let options = Options::builder().stats_csv("moo.csv".into()).build();
     //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
     //     insta::assert_yaml_snapshot!(describe);
     // }

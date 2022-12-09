@@ -1,0 +1,25 @@
+---
+source: src/describe.rs
+expression: describe
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: tab_delimited
+    row_count: 1
+    schema:
+      fields:
+        - name: a
+          type: string
+          format: string
+        - name: b
+          type: string
+          format: string
+        - name: c
+          type: string
+          format: string
+    path: fixtures/tab_delimited.csv
+    dialect:
+      delimiter: "\t"
+      quoteChar: "\""
+

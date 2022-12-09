@@ -1,0 +1,28 @@
+---
+source: src/describe.rs
+expression: describe
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: semi_colon
+    row_count: 1
+    schema:
+      fields:
+        - name: a
+          type: string
+          format: string
+        - name: b
+          type: string
+          format: string
+        - name: c
+          type: string
+          format: string
+        - name: d
+          type: string
+          format: string
+    path: fixtures/semi_colon.csv
+    dialect:
+      delimiter: ;
+      quoteChar: "\""
+
