@@ -856,21 +856,23 @@ fn insert_sql_data(
 }
 
 
-pub fn csvs_to_sqlite(db_path: String, csvs: Vec<PathBuf>) -> Result<(), Error> {
+pub fn csvs_to_sqlite(db_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let describe_options = describe::Options::builder().build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     let mut options = Options::builder().build();
     options.datapackage_string = true;
-    datapackage_to_sqlite_with_options(db_path, serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_sqlite_with_options(db_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
-pub fn csvs_to_sqlite_with_options(db_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<(), Error> {
+pub fn csvs_to_sqlite_with_options(db_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
     let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
 
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
 
-    datapackage_to_sqlite_with_options(db_path, serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_sqlite_with_options(db_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
 pub fn datapackage_to_sqlite(db_path: String, datapackage: String) -> Result<(), Error> {
@@ -1119,19 +1121,21 @@ fn create_parquet(
     Ok(())
 }
 
-pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<(), Error> {
+pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
-pub fn csvs_to_parquet_with_options(output_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<(), Error> {
+pub fn csvs_to_parquet_with_options(output_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
     let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
@@ -1329,19 +1333,21 @@ fn create_sheet(
 }
 
 
-pub fn csvs_to_xlsx(xlsx_path: String, csvs: Vec<PathBuf>) -> Result<(), Error> {
+pub fn csvs_to_xlsx(xlsx_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
-pub fn csvs_to_xlsx_with_options(xlsx_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<(), Error> {
+pub fn csvs_to_xlsx_with_options(xlsx_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
     let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
 pub fn datapackage_to_xlsx(xlsx_path: String, datapackage: String) -> Result<(), Error> {
@@ -1404,19 +1410,21 @@ pub fn datapackage_to_xlsx_with_options(
     Ok(())
 }
 
-pub fn csvs_to_postgres(postgres_url: String, csvs: Vec<PathBuf>) -> Result<(), Error> {
+pub fn csvs_to_postgres(postgres_url: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
-pub fn csvs_to_postgres_with_options(postgres_url: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<(), Error> {
+pub fn csvs_to_postgres_with_options(postgres_url: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
     let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)
+    datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    Ok(datapackage)
 }
 
 pub fn datapackage_to_postgres(postgres_url: String, datapackage: String) -> Result<(), Error> {
