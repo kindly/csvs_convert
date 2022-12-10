@@ -12,7 +12,7 @@ pub fn describe(mut reader: Reader<std::fs::File>, with_stats:bool) -> Result<Va
             headers.push(header.to_owned());
             let mut describer = Describer::new();
             describer.calculate_stats = with_stats;
-            describers.push(Describer::new())
+            describers.push(describer)
         }
     }
 

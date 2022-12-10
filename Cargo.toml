@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -33,7 +33,7 @@ regex = "1.6.0"
 postgres = "0.19.3"
 tempdir = "0.3.7"
 thiserror = "1.0.35"
-pdatastructs = "0.7.0"
+pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits", "fixedbitset"], default-features = false }
 streaming-stats = "0.2.3"
 counter = "0.5.7"
 
