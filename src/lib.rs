@@ -2042,7 +2042,6 @@ mod tests {
         .unwrap();
 
         assert!(tmp.join("sqlite.db").exists());
-        assert_yaml_snapshot!(datapackage);
     }
 
     #[test]
