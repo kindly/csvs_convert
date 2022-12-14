@@ -1,12 +1,12 @@
-pub use crate::describer::{Describer, Options as DescriberOptions};
 pub use crate::describe_csv::{describe as describe_csv, describe_parallel};
-use std::path::PathBuf;
+pub use crate::describer::{Describer, Options as DescriberOptions};
 use pathdiff::diff_paths;
-use thiserror::Error;
 use serde_json::{json, Value};
-use typed_builder::TypedBuilder;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use thiserror::Error;
+use typed_builder::TypedBuilder;
 
 #[derive(Error, Debug)]
 pub enum DescribeError {
@@ -49,35 +49,37 @@ fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
     for char in top_10.as_bytes() {
         if [b',', b'\t', b'|', b';', b':'].contains(char) {
             found = *char;
-            break
+            break;
         }
     }
-    return Ok(found)
+    return Ok(found);
 }
 
-pub fn get_csv_reader_builder(file: PathBuf, options: &Options) -> Result<(csv::ReaderBuilder, u8, u8), DescribeError>{
-
+pub fn get_csv_reader_builder(
+    file: PathBuf,
+    options: &Options,
+) -> Result<(csv::ReaderBuilder, u8, u8), DescribeError> {
     let mut delimiter = options.delimiter.unwrap_or(b',');
     let quote = options.quote.unwrap_or(b'"');
 
     if options.delimiter.is_none() {
         delimiter = simple_sniff(&file)?
-    } 
+    }
 
     let mut reader_builder = csv::ReaderBuilder::new();
 
-    reader_builder 
-        .delimiter(delimiter)
-        .quote(quote);
+    reader_builder.delimiter(delimiter).quote(quote);
 
     Ok((reader_builder, delimiter, quote))
 }
 
-
-pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) -> Result<Value, DescribeError>{
-
+pub fn describe_file(
+    file: PathBuf,
+    mut output_dir: PathBuf,
+    options: &Options,
+) -> Result<Value, DescribeError> {
     if !file.exists() {
-        return Err(DescribeError::FileNotExist(file.to_string_lossy().into()))
+        return Err(DescribeError::FileNotExist(file.to_string_lossy().into()));
     }
 
     if output_dir.to_string_lossy().is_empty() {
@@ -86,28 +88,41 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) 
 
     let (csv_reader_builder, delimiter, quote) = get_csv_reader_builder(file.clone(), options)?;
 
-    let describer_options = DescriberOptions::builder().
-        mergable_stats(options.threads > 0 && (options.stats || !options.stats_csv.is_empty())).
-        stats(options.stats || !options.stats_csv.is_empty()).build();
-    
+    let describer_options = DescriberOptions::builder()
+        .mergable_stats(options.threads > 0 && (options.stats || !options.stats_csv.is_empty()))
+        .stats(options.stats || !options.stats_csv.is_empty())
+        .build();
+
     println!("{options:?}");
     println!("{describer_options:?}");
 
     let mut describe_value = if options.threads > 0 {
-        describe_parallel(csv_reader_builder, file.clone(), describer_options, options.threads)?
+        describe_parallel(
+            csv_reader_builder,
+            file.clone(),
+            describer_options,
+            options.threads,
+        )?
     } else {
-        describe_csv(csv_reader_builder.from_path(file.clone())?, describer_options)?
+        describe_csv(
+            csv_reader_builder.from_path(file.clone())?,
+            describer_options,
+        )?
     };
 
     let fields_value = describe_value["fields"].take();
 
     let relative_path = diff_paths(
-        std::fs::canonicalize(&file)?, 
-        &std::fs::canonicalize(&output_dir)?
+        std::fs::canonicalize(&file)?,
+        &std::fs::canonicalize(&output_dir)?,
     );
 
-    let file_name = file.file_name().expect("know file exists").to_string_lossy().into_owned();
-    
+    let file_name = file
+        .file_name()
+        .expect("know file exists")
+        .to_string_lossy()
+        .into_owned();
+
     let file_no_extension = file_name.split(".").next();
 
     let delimiter = String::from_utf8_lossy(&[delimiter]).to_string();
@@ -126,12 +141,14 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) 
             "quoteChar": quote
         }
     });
-    return Ok(resource)
-
+    return Ok(resource);
 }
 
-
-pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, options: &Options) -> Result<Value, DescribeError> {
+pub fn describe_files(
+    files: Vec<PathBuf>,
+    output_dir: PathBuf,
+    options: &Options,
+) -> Result<Value, DescribeError> {
     let mut resources = vec![];
 
     for file in files {
@@ -144,57 +161,72 @@ pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, options: &Option
     });
 
     if !options.stats_csv.is_empty() {
-        datapackage_to_stats_csv(&datapackage, options.stats_csv.clone().into(), options.threads > 0)?;
+        datapackage_to_stats_csv(
+            &datapackage,
+            options.stats_csv.clone().into(),
+            options.threads > 0,
+        )?;
     }
 
     Ok(datapackage)
 }
 
-
-pub fn output_datapackage(files: Vec<PathBuf>, output_dir: PathBuf, options: &Options) -> Result<(), DescribeError> {
+pub fn output_datapackage(
+    files: Vec<PathBuf>,
+    output_dir: PathBuf,
+    options: &Options,
+) -> Result<(), DescribeError> {
     let datapackage = describe_files(files, output_dir.clone(), options)?;
     let file = std::fs::File::create(output_dir.join("datapackage.json"))?;
     serde_json::to_writer_pretty(file, &datapackage)?;
     Ok(())
 }
 
-fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf, mergable_stats: bool) -> Result<(), DescribeError> {
+fn datapackage_to_stats_csv(
+    datapackage: &Value,
+    path: PathBuf,
+    mergable_stats: bool,
+) -> Result<(), DescribeError> {
     let resources_option = datapackage["resources"].as_array();
 
     let resources = resources_option.expect("we made the datapackage so key should be there");
     let core_fields = vec!["table", "field", "type", "format"];
-    let stats_fields = if mergable_stats { vec![
-        "min_len",
-        "max_len",
-        "min_str",
-        "max_str",
-        "count",
-        "empty_count",
-        "estimate_unique",
-        "sum",
-        "mean",
-        "min_number",
-        "max_number"
-    ]} else { vec![
-        "min_len",
-        "max_len",
-        "min_str",
-        "max_str",
-        "count",
-        "empty_count",
-        "exact_unique",
-        "estimate_unique",
-        "sum",
-        "mean",
-        "variance",
-        "stddev",
-        "min_number",
-        "max_number",
-        "median",
-        "lower_quartile",
-        "upper_quartile",
-        "deciles"
-    ]};
+    let stats_fields = if mergable_stats {
+        vec![
+            "min_len",
+            "max_len",
+            "min_str",
+            "max_str",
+            "count",
+            "empty_count",
+            "estimate_unique",
+            "sum",
+            "mean",
+            "min_number",
+            "max_number",
+        ]
+    } else {
+        vec![
+            "min_len",
+            "max_len",
+            "min_str",
+            "max_str",
+            "count",
+            "empty_count",
+            "exact_unique",
+            "estimate_unique",
+            "sum",
+            "mean",
+            "variance",
+            "stddev",
+            "min_number",
+            "max_number",
+            "median",
+            "lower_quartile",
+            "upper_quartile",
+            "deciles",
+        ]
+    };
     let mut all_fields = core_fields;
     all_fields.append(&mut stats_fields.clone());
 
@@ -211,12 +243,12 @@ fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf, mergable_stats: 
                 row.push(field["format"].as_str().unwrap_or("").to_string());
                 for stat in stats_fields.clone() {
                     let value = match field["stats"].get(stat).unwrap() {
-                        Value::Null => {"".to_string()},
-                        Value::String(a) => {a.to_owned()},
-                        Value::Bool(a) => {a.to_string()},
-                        Value::Number(a) => {a.to_string()},
-                        Value::Array(a) => {serde_json::to_string(&a).expect("was json already")},
-                        Value::Object(a) => {serde_json::to_string(&a).expect("was json already")}
+                        Value::Null => "".to_string(),
+                        Value::String(a) => a.to_owned(),
+                        Value::Bool(a) => a.to_string(),
+                        Value::Number(a) => a.to_string(),
+                        Value::Array(a) => serde_json::to_string(&a).expect("was json already"),
+                        Value::Object(a) => serde_json::to_string(&a).expect("was json already"),
                     };
                     row.push(value)
                 }
@@ -227,7 +259,6 @@ fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf, mergable_stats: 
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,11 +266,29 @@ mod tests {
     #[test]
     fn all_types() {
         let options = Options::builder().build();
-        let datapackage = describe_files(vec!["src/fixtures/all_types.csv".into()], "".into(), &options).unwrap();
+        let datapackage = describe_files(
+            vec!["src/fixtures/all_types.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
         insta::assert_yaml_snapshot!(datapackage);
-        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into()], "".into(), &options).unwrap();
+        let datapackage = describe_files(
+            vec!["src/fixtures/all_types_semi_colon.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
         insta::assert_yaml_snapshot!(datapackage);
-        let datapackage = describe_files(vec!["src/fixtures/all_types_semi_colon.csv".into(), "src/fixtures/all_types.csv".into()], "src/fixtures".into(), &options).unwrap();
+        let datapackage = describe_files(
+            vec![
+                "src/fixtures/all_types_semi_colon.csv".into(),
+                "src/fixtures/all_types.csv".into(),
+            ],
+            "src/fixtures".into(),
+            &options,
+        )
+        .unwrap();
         insta::assert_yaml_snapshot!(datapackage);
     }
 
@@ -248,7 +297,9 @@ mod tests {
         let tmpdir = tempdir::TempDir::new("").unwrap();
         let path = tmpdir.into_path();
         let input_file = path.join("all_types.csv");
-        let options = Options::builder().stats_csv(path.join("stats.csv").to_string_lossy().into()).build();
+        let options = Options::builder()
+            .stats_csv(path.join("stats.csv").to_string_lossy().into())
+            .build();
 
         std::fs::copy("src/fixtures/all_types.csv", &input_file).unwrap();
 
@@ -261,7 +312,14 @@ mod tests {
 
         let mut csv_reader = csv::Reader::from_path(path.join("stats.csv")).unwrap();
 
-        rows.push(csv_reader.headers().unwrap().iter().map(|a| {a.to_string()}).collect());
+        rows.push(
+            csv_reader
+                .headers()
+                .unwrap()
+                .iter()
+                .map(|a| a.to_string())
+                .collect(),
+        );
 
         for row in csv_reader.deserialize() {
             let row: Vec<String> = row.unwrap();
@@ -275,7 +333,10 @@ mod tests {
         let tmpdir = tempdir::TempDir::new("").unwrap();
         let path = tmpdir.into_path();
         let input_file = path.join("all_types.csv");
-        let options = Options::builder().threads(4).stats_csv(path.join("stats.csv").to_string_lossy().into()).build();
+        let options = Options::builder()
+            .threads(4)
+            .stats_csv(path.join("stats.csv").to_string_lossy().into())
+            .build();
 
         std::fs::copy("src/fixtures/all_types.csv", &input_file).unwrap();
 
@@ -288,7 +349,14 @@ mod tests {
 
         let mut csv_reader = csv::Reader::from_path(path.join("stats.csv")).unwrap();
 
-        rows.push(csv_reader.headers().unwrap().iter().map(|a| {a.to_string()}).collect());
+        rows.push(
+            csv_reader
+                .headers()
+                .unwrap()
+                .iter()
+                .map(|a| a.to_string())
+                .collect(),
+        );
 
         for row in csv_reader.deserialize() {
             let row: Vec<String> = row.unwrap();
@@ -297,36 +365,56 @@ mod tests {
         insta::assert_yaml_snapshot!(rows);
     }
 
-
     #[test]
     fn test_tab() {
         let options = Options::builder().build();
-        let describe = describe_files(vec!["fixtures/tab_delimited.csv".into()], "".into(), &options).unwrap();
+        let describe = describe_files(
+            vec!["fixtures/tab_delimited.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
         insta::assert_yaml_snapshot!(describe);
     }
 
     #[test]
     fn test_semi_colon() {
         let options = Options::builder().build();
-        let describe = describe_files(vec!["fixtures/semi_colon.csv".into()], "".into(), &options).unwrap();
+        let describe =
+            describe_files(vec!["fixtures/semi_colon.csv".into()], "".into(), &options).unwrap();
         insta::assert_yaml_snapshot!(describe);
     }
 
     #[test]
     fn basic_multi() {
         let options = Options::builder().stats(true).threads(8).build();
-        let describe = describe_files(vec!["src/fixtures/all_types.csv".into()], "".into(), &options).unwrap();
+        let describe = describe_files(
+            vec!["src/fixtures/all_types.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
         insta::assert_yaml_snapshot!(describe);
     }
 
     #[test]
     fn large_test_threading() {
         let options = Options::builder().build();
-        let describe = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options).unwrap();
+        let describe = describe_files(
+            vec!["fixtures/large/csv/data.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
 
         for i in 0..16 {
             let options_multi = Options::builder().threads(i).build();
-            let describe_multi = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options_multi).unwrap();
+            let describe_multi = describe_files(
+                vec!["fixtures/large/csv/data.csv".into()],
+                "".into(),
+                &options_multi,
+            )
+            .unwrap();
             assert_json_diff::assert_json_eq!(describe, describe_multi);
         }
         insta::assert_yaml_snapshot!(describe);
@@ -337,7 +425,7 @@ mod tests {
             Value::Number(n) => {
                 // Convert the number to a f64 and round it
                 let rounded = n.as_f64().unwrap().round();
-    
+
                 // Convert the rounded f64 to a string and update the value
                 *value = Value::Number(serde_json::Number::from_f64(rounded).unwrap());
             }
@@ -360,12 +448,22 @@ mod tests {
     #[test]
     fn large_test_threading_stats() {
         let options = Options::builder().stats(true).threads(1).build();
-        let mut describe = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options).unwrap();
+        let mut describe = describe_files(
+            vec!["fixtures/large/csv/data.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
         round_numbers(&mut describe);
 
         for i in 2..16 {
             let options_multi = Options::builder().stats(true).threads(i).build();
-            let mut describe_multi = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options_multi).unwrap();
+            let mut describe_multi = describe_files(
+                vec!["fixtures/large/csv/data.csv".into()],
+                "".into(),
+                &options_multi,
+            )
+            .unwrap();
             round_numbers(&mut describe_multi);
             assert_json_diff::assert_json_eq!(describe, describe_multi);
         }
@@ -375,12 +473,22 @@ mod tests {
     #[test]
     fn small_test_threading_stats() {
         let options = Options::builder().stats(true).threads(1).build();
-        let mut describe = describe_files(vec!["src/fixtures/all_types_six_rows.csv".into()], "".into(), &options).unwrap();
+        let mut describe = describe_files(
+            vec!["src/fixtures/all_types_six_rows.csv".into()],
+            "".into(),
+            &options,
+        )
+        .unwrap();
         round_numbers(&mut describe);
 
         for i in 2..100 {
             let options_multi = Options::builder().stats(true).threads(i).build();
-            let mut describe_multi = describe_files(vec!["src/fixtures/all_types_six_rows.csv".into()], "".into(), &options_multi).unwrap();
+            let mut describe_multi = describe_files(
+                vec!["src/fixtures/all_types_six_rows.csv".into()],
+                "".into(),
+                &options_multi,
+            )
+            .unwrap();
             round_numbers(&mut describe_multi);
             assert_json_diff::assert_json_eq!(describe, describe_multi);
         }
@@ -393,5 +501,4 @@ mod tests {
     //     let describe = describe_files(vec!["../flatterer_data/rows.csv".into()], "".into(), &options).unwrap();
     //     //insta::assert_yaml_snapshot!(describe);
     // }
-
 }

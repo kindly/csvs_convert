@@ -1,10 +1,10 @@
 use pdatastructs::hyperloglog::HyperLogLog;
+use pdatastructs::num_traits::ToPrimitive;
 use pdatastructs::tdigest;
 use stats::OnlineStats;
-use pdatastructs::num_traits::ToPrimitive;
-use typed_builder::TypedBuilder;
-use std::cmp::{min, max};
+use std::cmp::{max, min};
 use std::collections::HashSet;
+use typed_builder::TypedBuilder;
 
 use chrono::prelude::*;
 use chrono::DateTime;
@@ -41,8 +41,8 @@ fn descriptions() -> Vec<(&'static str, &'static str)> {
     output
 }
 
-fn datetime_formats() ->  Vec<&'static str> {
-    vec! [
+fn datetime_formats() -> Vec<&'static str> {
+    vec![
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
         "%Y-%m-%d %H:%M:%S.%f",
@@ -88,8 +88,8 @@ fn datetime_formats() ->  Vec<&'static str> {
     ]
 }
 
-fn datetime_tz_formats() ->  Vec<&'static str> {
-    vec! [
+fn datetime_tz_formats() -> Vec<&'static str> {
+    vec![
         "%Y-%m-%d %H:%M:%S%#z",
         "%Y-%m-%d %H:%M:%S.%f%#z",
         "%Y-%m-%d %H:%M%#z",
@@ -103,29 +103,14 @@ fn datetime_tz_formats() ->  Vec<&'static str> {
 }
 
 fn date_formats() -> Vec<&'static str> {
-    vec! [
-        "%Y-%m-%d",
-        "%Y-%b-%d",
-        "%B %d %y",
-        "%B %d %Y",
-        "%d %B %y",
-        "%d %B %Y",
-        "%m/%d/%y",
-        "%m/%d/%Y",
-        "%d/%m/%y",
-        "%d/%m/%Y",
-        "%Y/%m/%d",
-        "%m.%d.%Y",
-        "%Y.%m.%d",
+    vec![
+        "%Y-%m-%d", "%Y-%b-%d", "%B %d %y", "%B %d %Y", "%d %B %y", "%d %B %Y", "%m/%d/%y",
+        "%m/%d/%Y", "%d/%m/%y", "%d/%m/%Y", "%Y/%m/%d", "%m.%d.%Y", "%Y.%m.%d",
     ]
 }
 
 fn time_formats() -> Vec<&'static str> {
-    vec! [
-        "%H:%M",
-        "%I:%M:%S %P",
-        "%I:%M %P",
-    ]
+    vec!["%H:%M", "%I:%M:%S %P", "%I:%M %P"]
 }
 
 #[derive(Default, Debug, TypedBuilder, Clone)]
@@ -154,13 +139,13 @@ pub struct Describer {
     pub minmax_str: stats::MinMax<Vec<u8>>,
     pub loglog: HyperLogLog<str>,
     pub tdigest: tdigest::TDigest<tdigest::K1>,
-    pub stats: OnlineStats
+    pub stats: OnlineStats,
 }
 
 impl Describer {
     pub fn new() -> Describer {
         let options = Options::builder().build();
-        Describer::new_with_options(options) 
+        Describer::new_with_options(options)
     }
 
     pub fn new_with_options(options: Options) -> Describer {
@@ -182,8 +167,8 @@ impl Describer {
             minmax_str: stats::MinMax::new(),
             loglog: HyperLogLog::new(12),
             tdigest: tdigest::TDigest::new(scale_function, 1000),
-            stats: OnlineStats::new()
-        }
+            stats: OnlineStats::new(),
+        };
     }
 
     pub fn merge(&mut self, other: Describer) {
@@ -192,83 +177,97 @@ impl Describer {
             self.empty_count = self.empty_count + other.empty_count;
             self.max_len = max(self.max_len, other.max_len);
             self.min_len = match (self.min_len, other.min_len) {
-                (Some(x), Some(y)) => {Some(min(x,y))},
-                (None, Some(y)) => {Some(y)},
-                _ => {self.min_len}
+                (Some(x), Some(y)) => Some(min(x, y)),
+                (None, Some(y)) => Some(y),
+                _ => self.min_len,
             };
 
             if other.count > 0 {
-                self.minmax_str.add(other.minmax_str.min().expect("checked for not sample").clone());
-                self.minmax_str.add(other.minmax_str.max().expect("checked for not sample").clone());
+                self.minmax_str.add(
+                    other
+                        .minmax_str
+                        .min()
+                        .expect("checked for not sample")
+                        .clone(),
+                );
+                self.minmax_str.add(
+                    other
+                        .minmax_str
+                        .max()
+                        .expect("checked for not sample")
+                        .clone(),
+                );
             }
             self.loglog.merge(&other.loglog);
             self.sum = self.sum + other.sum;
 
             self.max_number = match (self.max_number, other.max_number) {
-                (Some(x), Some(y)) => {Some(x.max(y))},
-                (None, Some(y)) => {Some(y)},
-                _ => {self.max_number}
+                (Some(x), Some(y)) => Some(x.max(y)),
+                (None, Some(y)) => Some(y),
+                _ => self.max_number,
             };
 
             self.min_number = match (self.min_number, other.min_number) {
-                (Some(x), Some(y)) => {Some(x.min(y))},
-                (None, Some(y)) => {Some(y)},
-                _ => {self.min_number}
+                (Some(x), Some(y)) => Some(x.min(y)),
+                (None, Some(y)) => Some(y),
+                _ => self.min_number,
             };
-
         }
 
         let self_desc: HashSet<_> = self.descriptions.iter().collect();
         let other_desc: HashSet<_> = other.descriptions.iter().collect();
-        self.descriptions = self_desc.intersection(&other_desc).into_iter().map(|a| {**a}).collect();
+        self.descriptions = self_desc
+            .intersection(&other_desc)
+            .into_iter()
+            .map(|a| **a)
+            .collect();
     }
 
     pub fn guess_type(&mut self) -> (&'static str, String) {
         let matched_types: Vec<&str> = self.descriptions.iter().map(|(t, _)| *t).collect();
 
         if matched_types.contains(&"boolean") {
-            return ("boolean", "boolean".to_owned())
+            return ("boolean", "boolean".to_owned());
         }
 
         if matched_types.contains(&"integer") {
-            return ("integer", "integer".to_owned())
+            return ("integer", "integer".to_owned());
         }
 
         if matched_types.contains(&"number") {
-            return ("number", "number".to_owned())
+            return ("number", "number".to_owned());
         }
 
         if matched_types.len() == 1 && matched_types.contains(&"datetime_tz") {
-            return ("datetime", self.descriptions[0].1.to_owned())
+            return ("datetime", self.descriptions[0].1.to_owned());
         }
 
         if matched_types.len() == 1 && matched_types.contains(&"datetime") {
-            return ("datetime", self.descriptions[0].1.to_owned())
+            return ("datetime", self.descriptions[0].1.to_owned());
         }
 
         if matched_types.len() == 1 && matched_types.contains(&"date") {
-            return ("date", self.descriptions[0].1.to_owned())
+            return ("date", self.descriptions[0].1.to_owned());
         }
 
         if matched_types.len() == 1 && matched_types.contains(&"time") {
-            return ("time", self.descriptions[0].1.to_owned())
+            return ("time", self.descriptions[0].1.to_owned());
         }
 
         if matched_types.len() == 1 && matched_types.contains(&"object") {
-            return ("object", "object".to_owned())
+            return ("object", "object".to_owned());
         }
 
         if matched_types.len() == 1 && matched_types.contains(&"array") {
-            return ("array", "array".to_owned())
+            return ("array", "array".to_owned());
         }
 
-        return ("string", "string".to_owned())
+        return ("string", "string".to_owned());
     }
 
     pub fn stats(&mut self) -> serde_json::Value {
-
         if !self.options.stats && !self.options.mergable_stats {
-            return serde_json::json!({})
+            return serde_json::json!({});
         }
 
         let top_20 = self.string_freq.k_most_common_ordered(20);
@@ -277,19 +276,29 @@ impl Describer {
         for i in 1..10 {
             let i = f64::from(i) * 0.1;
             deciles.push(self.tdigest.quantile(i));
+        }
+        let deciles = if self.tdigest.is_empty() {
+            None
+        } else {
+            Some(deciles)
         };
-        let deciles = if self.tdigest.is_empty() {None} else {Some(deciles)};
 
         let mut centiles = vec![];
         for i in 1..100 {
             let i = f64::from(i) * 0.01;
             centiles.push(self.tdigest.quantile(i));
+        }
+        let centiles = if self.tdigest.is_empty() {
+            None
+        } else {
+            Some(centiles)
         };
-        let centiles = if self.tdigest.is_empty() {None} else {Some(centiles)};
 
         let empty = vec![];
-        let min_string = String::from_utf8_lossy(&self.minmax_str.min().unwrap_or(&empty)).to_string();
-        let max_string = String::from_utf8_lossy(&self.minmax_str.max().unwrap_or(&empty)).to_string();
+        let min_string =
+            String::from_utf8_lossy(&self.minmax_str.min().unwrap_or(&empty)).to_string();
+        let max_string =
+            String::from_utf8_lossy(&self.minmax_str.max().unwrap_or(&empty)).to_string();
 
         let is_number = ["number", "integer"].contains(&self.guess_type().0);
 
@@ -315,7 +324,7 @@ impl Describer {
                 "max_str": if max_string.is_empty() {None} else {Some(max_string)},
                 "count": self.count,
                 "empty_count": self.empty_count,
-                "exact_unique": if self.string_freq.len() == 0 {None} else {Some(self.string_freq.len())}, 
+                "exact_unique": if self.string_freq.len() == 0 {None} else {Some(self.string_freq.len())},
                 "estimate_unique": if self.string_freq.len() == 0 {Some(self.loglog.count())} else {None},
                 "top_20": if top_20.is_empty() {None} else {Some(top_20)},
                 "sum": if !is_number {None} else {Some(self.stats.mean() * self.stats.len().to_f64().unwrap_or(0_f64))},
@@ -331,13 +340,12 @@ impl Describer {
                 "centiles": centiles,
             })
         }
-
     }
 
-    pub fn process(&mut self, string: &str){
+    pub fn process(&mut self, string: &str) {
         if string.is_empty() {
             self.empty_count += 1;
-            return
+            return;
         }
         self.count += 1;
 
@@ -371,7 +379,6 @@ impl Describer {
             }
         }
 
-
         for num in 0usize..self.descriptions.len() {
             let (type_name, type_description) = self.descriptions[num];
 
@@ -398,8 +405,10 @@ impl Describer {
                             self.max_number = Some(number);
                             self.min_number = Some(number);
                         }
-                        self.max_number = Some(number.max(self.max_number.expect("number already checked")));
-                        self.min_number = Some(number.min(self.min_number.expect("number already checked")));
+                        self.max_number =
+                            Some(number.max(self.max_number.expect("number already checked")));
+                        self.min_number =
+                            Some(number.min(self.min_number.expect("number already checked")));
                         self.sum = self.sum + number;
                     }
                 } else {
@@ -449,7 +458,6 @@ impl Describer {
             self.descriptions.remove(*num);
         }
         self.to_delete.clear()
-
     }
 
     fn check_integer(&mut self, string: &str) -> bool {
@@ -465,8 +473,12 @@ impl Describer {
     }
 
     fn check_boolean(&mut self, string: &str) -> bool {
-        if ["1", "0", "true", "false", "t", "f", "True", "False", "TRUE", "FALSE"].contains(&string) {
-            return true
+        if [
+            "1", "0", "true", "false", "t", "f", "True", "False", "TRUE", "FALSE",
+        ]
+        .contains(&string)
+        {
+            return true;
         }
         false
     }
@@ -474,79 +486,77 @@ impl Describer {
     fn check_datetime_tz(&mut self, string: &str, format: &str) -> bool {
         if format == "rfc2822" {
             if let Ok(_) = DateTime::parse_from_rfc2822(string) {
-                return true
+                return true;
             } else {
-                return false
+                return false;
             }
         } else if format == "rfc3339" {
             if let Ok(_) = DateTime::parse_from_rfc3339(string) {
-                return true
+                return true;
             } else {
-                return false
+                return false;
             }
         } else {
             if let Ok(_) = DateTime::parse_from_str(string, format) {
                 println!("true");
-                return true
+                return true;
             } else {
-                return false
+                return false;
             }
         }
     }
 
     fn check_datetime(&mut self, string: &str, format: &str) -> bool {
-        if let Ok(_) = chrono::Utc.datetime_from_str(string, format){
-            return true
+        if let Ok(_) = chrono::Utc.datetime_from_str(string, format) {
+            return true;
         } else {
-            return false
+            return false;
         }
     }
 
     fn check_date(&mut self, string: &str, format: &str) -> bool {
-        if let Ok(_) = chrono::NaiveDate::parse_from_str(string, format){
-            return true
+        if let Ok(_) = chrono::NaiveDate::parse_from_str(string, format) {
+            return true;
         } else {
-            return false
+            return false;
         }
     }
 
     fn check_time(&mut self, string: &str, format: &str) -> bool {
-        if let Ok(_) = chrono::NaiveTime::parse_from_str(string, format){
-            return true
+        if let Ok(_) = chrono::NaiveTime::parse_from_str(string, format) {
+            return true;
         } else {
-            return false
+            return false;
         }
     }
 
     fn check_json_array(&mut self, string: &str) -> bool {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(string){
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(string) {
             if value.is_array() {
-                return true
+                return true;
             }
-            return false
+            return false;
         } else {
-            return false
+            return false;
         }
     }
 
     fn check_json_object(&mut self, string: &str) -> bool {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(string){
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(string) {
             if value.is_object() {
-                return true
+                return true;
             }
-            return false
+            return false;
         } else {
-            return false
+            return false;
         }
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*; //, datetime_formats, datetime_tz_formats, date_formats};
-    //use chrono::prelude::*;
+                  //use chrono::prelude::*;
 
     #[test]
     fn guess_bool() {
@@ -629,7 +639,6 @@ mod tests {
         assert_eq!(describer.guess_type().0, "datetime");
         describer.process("2014-13-28 21:00:09+09:00");
         assert_eq!(describer.guess_type().0, "string");
-
 
         let mut describer = Describer::new();
         describer.process("28/01/2008 21:00");
@@ -723,7 +732,6 @@ mod tests {
         }
         assert_eq!(describer.loglog.count(), 1012);
         insta::assert_debug_snapshot!(describer.stats());
-
     }
 
     #[test]
@@ -749,13 +757,13 @@ mod tests {
         insta::assert_debug_snapshot!(describer.stats());
 
         describer.process("a");
-        
+
         insta::assert_debug_snapshot!(describer.stats());
     }
 
     // #[test]
     // fn formats() {
-    //     let utc: DateTime<Utc> = Utc::now(); 
+    //     let utc: DateTime<Utc> = Utc::now();
 
     //     for format in datetime_formats() {
     //         println!("insert into test_dates values ('{}','{}','{}');", "datetime", format, utc.format(format));
@@ -774,6 +782,4 @@ mod tests {
     //     assert!(false);
 
     // }
-
-
 }

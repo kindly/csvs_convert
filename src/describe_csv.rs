@@ -1,8 +1,8 @@
 use crate::describe::Describer;
 use crate::describer::Options;
+use crossbeam_channel::unbounded;
 use csv::Reader;
 use serde_json::{json, Value};
-use crossbeam_channel::unbounded;
 use std::path::PathBuf;
 
 pub fn describe(mut reader: Reader<std::fs::File>, options: Options) -> Result<Value, csv::Error> {
@@ -30,7 +30,6 @@ pub fn describe(mut reader: Reader<std::fs::File>, options: Options) -> Result<V
 
     let mut fields = vec![];
     for (num, mut describer) in describers.into_iter().enumerate() {
-
         let mut field = json!({
             "name": headers[num],
             "type": describer.guess_type().0,
@@ -38,7 +37,10 @@ pub fn describe(mut reader: Reader<std::fs::File>, options: Options) -> Result<V
         });
 
         if options.stats || options.mergable_stats {
-            field.as_object_mut().expect("We know its an object").insert("stats".into(), describer.stats());
+            field
+                .as_object_mut()
+                .expect("We know its an object")
+                .insert("stats".into(), describer.stats());
         }
         fields.push(field);
     }
@@ -48,14 +50,21 @@ pub fn describe(mut reader: Reader<std::fs::File>, options: Options) -> Result<V
 
 //struct Sender {
 //    channel: crossbeam_channel::Sender<(usize, String)>,
-//} 
+//}
 
-pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, options: Options, num_threads: usize) -> Result<Value, csv::Error> {
-
+pub fn describe_parallel(
+    reader_builder: csv::ReaderBuilder,
+    file: PathBuf,
+    options: Options,
+    num_threads: usize,
+) -> Result<Value, csv::Error> {
     let mut wtr = std::io::Cursor::new(vec![]);
 
     {
-        csv_index::RandomAccessSimple::create(&mut reader_builder.from_path(file.clone())?, &mut wtr)?;
+        csv_index::RandomAccessSimple::create(
+            &mut reader_builder.from_path(file.clone())?,
+            &mut wtr,
+        )?;
     }
 
     let mut idx = csv_index::RandomAccessSimple::open(wtr)?;
@@ -77,7 +86,7 @@ pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, opti
     let mut current_index = 1;
 
     loop {
-        if idx.len() <= current_index   {
+        if idx.len() <= current_index {
             break;
         }
         let headers_clone = headers.clone();
@@ -86,7 +95,6 @@ pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, opti
         let pos = idx.get(current_index)?;
         let mut reader = reader_builder.from_path(file.clone())?;
         reader.seek(pos).unwrap();
-        
 
         pool.execute(move || {
             let mut describers = vec![];
@@ -98,13 +106,20 @@ pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, opti
             for row in reader.records().into_iter().take(chunk_size) {
                 let record = match row {
                     Ok(record) => record,
-                    Err(error) => {send_clone.send(Err(error)).expect("channel sending should work"); panic!()}
+                    Err(error) => {
+                        send_clone
+                            .send(Err(error))
+                            .expect("channel sending should work");
+                        panic!()
+                    }
                 };
                 for (index, cell) in record.iter().enumerate() {
                     describers[index].process(cell);
                 }
             }
-            send_clone.send(Ok(describers)).expect("channel should be there");
+            send_clone
+                .send(Ok(describers))
+                .expect("channel should be there");
         });
 
         current_index += chunk_size as u64;
@@ -120,7 +135,7 @@ pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, opti
             for describer in describers.into_iter() {
                 all_describers.push(describer)
             }
-            continue
+            continue;
         }
 
         for (num, describer) in describers.into_iter().enumerate() {
@@ -137,14 +152,16 @@ pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, opti
         });
 
         if options.stats || options.mergable_stats {
-            field.as_object_mut().expect("just main field above").insert("stats".into(), describer.stats());
+            field
+                .as_object_mut()
+                .expect("just main field above")
+                .insert("stats".into(), describer.stats());
         }
         fields.push(field);
     }
-    
-    return Ok(json!({"row_count": idx.len() - 1,"fields": fields}))
-}
 
+    return Ok(json!({"row_count": idx.len() - 1,"fields": fields}));
+}
 
 #[cfg(test)]
 mod tests {
@@ -161,7 +178,13 @@ mod tests {
     #[test]
     fn large_multi() {
         let reader_builder = csv::ReaderBuilder::new();
-        let metadata_multi = describe_parallel(reader_builder, "fixtures/large/csv/data.csv".into(), Options::builder().build(), 8).unwrap();
+        let metadata_multi = describe_parallel(
+            reader_builder,
+            "fixtures/large/csv/data.csv".into(),
+            Options::builder().build(),
+            8,
+        )
+        .unwrap();
 
         let reader = csv::Reader::from_path("fixtures/large/csv/data.csv").unwrap();
         let metadata = describe(reader, Options::builder().build()).unwrap();
@@ -170,5 +193,4 @@ mod tests {
 
         insta::assert_yaml_snapshot!(metadata);
     }
-
 }

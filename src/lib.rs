@@ -1,4 +1,4 @@
-//! Converts CSV files into XLSX/SQLITE/POSTGRESQL/PARQUET fast. 
+//! Converts CSV files into XLSX/SQLITE/POSTGRESQL/PARQUET fast.
 //!
 //! ## Aims
 
@@ -12,36 +12,36 @@
 //! * When inserting into existing databases automatically migrate schema of target to allow for new data (`evolve` option).
 //! * Memory efficient. All csvs and outputs are streamed so all conversions should take up very little memory.
 //! * Gather stats and information about CSV files into datapacakge.json file which can use it for customizing conversion.
-//! 
+//!
 //! ## Drawbacks
-//! 
+//!
 //! * CSV files currently need header rows.
 //! * Whole file needs to be on disk as whole CSV is analyzed therefore files are read twice.
 
-mod zip_dir;
 mod describe;
 mod describe_csv;
 mod describer;
+mod zip_dir;
 
-pub use describe::{Options as DescribeOptions, DescribeError, describe_files, output_datapackage};
-pub use describer::{Options as DescriberOptions, Describer};
 use csv::ReaderBuilder;
 use csv::Writer;
+pub use describe::{describe_files, output_datapackage, DescribeError, Options as DescribeOptions};
+pub use describer::{Describer, Options as DescriberOptions};
 use minijinja::Environment;
+use postgres::{Client, NoTls};
 use rusqlite::Connection;
 use serde_json::Value;
 use snafu::prelude::*;
 use snafu::{ensure, Snafu};
 use std::collections::HashMap;
+use std::fmt::Write as fmt_write;
 use std::fs::File;
 use std::io::BufReader;
+use std::io::Write;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use xlsxwriter::Workbook;
-use std::io::Write;
-use std::fmt::Write as fmt_write;
-use postgres::{Client, NoTls};
 
 use arrow::csv::Reader;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -88,7 +88,10 @@ pub enum Error {
     CSVRowError { source: csv::Error },
 
     #[snafu(display("{}{}", message, source))]
-    RusqliteError { source: rusqlite::Error, message: String},
+    RusqliteError {
+        source: rusqlite::Error,
+        message: String,
+    },
 
     #[snafu(display("{}", source))]
     JinjaError { source: minijinja::Error },
@@ -106,7 +109,10 @@ pub enum Error {
     XLSXError { source: xlsxwriter::XlsxError },
 
     #[snafu(display("Environment variable {} does not exist.", envvar))]
-    EnvVarError { source: std::env::VarError, envvar: String },
+    EnvVarError {
+        source: std::env::VarError,
+        envvar: String,
+    },
 
     #[snafu(display("Delimiter not valid utf-8"))]
     DelimeiterError { source: std::str::Utf8Error },
@@ -136,7 +142,7 @@ pub struct Options {
     pub delimiter: Option<u8>,
     #[builder(default)]
     pub quote: Option<u8>,
-    #[builder(default=true)]
+    #[builder(default = true)]
     pub double_quote: bool,
     #[builder(default=None)]
     pub escape: Option<u8>,
@@ -296,14 +302,21 @@ fn datapackage_json_to_value(filename: &str) -> Result<Value, Error> {
 fn merge_datapackage_json(mut base: Value, mut merger: Value) -> Result<Value, Error> {
     let merger_resources_value = merger["resources"].take();
 
-    let merger_resources = merger_resources_value.as_object().expect("we know its an obj");
-    let base_resources = base["resources"].as_object_mut().expect("we know its an obj");
+    let merger_resources = merger_resources_value
+        .as_object()
+        .expect("we know its an obj");
+    let base_resources = base["resources"]
+        .as_object_mut()
+        .expect("we know its an obj");
 
     for (resource, resource_value) in merger_resources {
         if !base_resources.contains_key(resource) {
             base_resources.insert(resource.clone(), resource_value.clone());
         } else {
-            for (field, field_value) in resource_value["schema"]["fields"].as_object().expect("we know its an obj") {
+            for (field, field_value) in resource_value["schema"]["fields"]
+                .as_object()
+                .expect("we know its an obj")
+            {
                 ensure!(
                     field_value.is_object(),
                     DatapackageMergeSnafu {
@@ -324,7 +337,9 @@ fn merge_datapackage_json(mut base: Value, mut merger: Value) -> Result<Value, E
                             message: "Each field needs to be an object"
                         }
                     );
-                    let base_fieldinfo = base_fields[field].as_object_mut().expect("we know its an obj");
+                    let base_fieldinfo = base_fields[field]
+                        .as_object_mut()
+                        .expect("we know its an obj");
 
                     let base_type = base_fieldinfo["type"].as_str().unwrap_or_default();
                     let field_type = field_value["type"].as_str().unwrap_or_default();
@@ -418,12 +433,8 @@ fn get_reader(file: &str, resource_path: &str, options: &Options) -> Result<Read
             })?,
         )))
     } else if file.ends_with(".zip") {
-        let zip_file = File::open(&file).context(IoSnafu {
-            filename: file,
-        })?;
-        let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu {
-            filename: file,
-        })?;
+        let zip_file = File::open(&file).context(IoSnafu { filename: file })?;
+        let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu { filename: file })?;
         Ok(Readers::Zip(zip))
     } else if PathBuf::from(&file).is_dir() {
         let file_pathbuf = PathBuf::from(file);
@@ -494,7 +505,10 @@ pub fn merge_datapackage_with_options(
     let mut csv_outputs = HashMap::new();
     let mut output_fields = HashMap::new();
 
-    for resource in merged_datapackage_json["resources"].as_array_mut().expect("we know its an array") {
+    for resource in merged_datapackage_json["resources"]
+        .as_array_mut()
+        .expect("we know its an array")
+    {
         let mut field_order_map = serde_json::Map::new();
         let mut fields: Vec<String> = Vec::new();
         for (index, field) in resource["schema"]["fields"]
@@ -508,7 +522,10 @@ pub fn merge_datapackage_with_options(
             fields.push(name.to_owned());
         }
 
-        let resource_path = resource["path"].as_str().expect("we know its a string").to_owned();
+        let resource_path = resource["path"]
+            .as_str()
+            .expect("we know its a string")
+            .to_owned();
 
         let mut full_path = path.join(&resource_path);
         full_path.pop();
@@ -557,13 +574,15 @@ pub fn merge_datapackage_with_options(
                     let zipped_file = zip
                         .by_name(&resource_path)
                         .context(ZipSnafu { filename: file })?;
-                    let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
+                    let csv_reader =
+                        get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                 }
                 Readers::File(file_reader) => {
                     let (filename, file_reader) = file_reader;
-                    let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(file_reader);
+                    let csv_reader =
+                        get_csv_reader_builder(&options, &resource).from_reader(file_reader);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                     if options.delete_input_csv {
@@ -612,7 +631,7 @@ fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBui
         double_quote = dialect_double_quote
     };
 
-    reader_builder 
+    reader_builder
         .delimiter(delimiter)
         .quote(quote)
         .double_quote(double_quote)
@@ -621,7 +640,6 @@ fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBui
 
     reader_builder
 }
-
 
 fn to_db_type(type_: String, format: String) -> String {
     match type_.as_str() {
@@ -632,14 +650,14 @@ fn to_db_type(type_: String, format: String) -> String {
             } else {
                 "TEXT".into()
             }
-        },
+        }
         "datetime" => {
             if ALLOWED_DATE_FORMATS.contains(&format.as_str()) || format.is_empty() {
                 "TIMESTAMP".to_string()
             } else {
                 "TEXT".into()
             }
-        },
+        }
         "number" => "NUMERIC".to_string(),
         "object" => "JSONB".to_string(),
         "array" => "JSONB".to_string(),
@@ -655,7 +673,6 @@ fn clean_field(_state: &minijinja::State, field: String) -> Result<String, minij
     }
     Ok(field)
 }
-
 
 fn render_sqlite_table(value: Value) -> Result<String, Error> {
     let sqlite_table = r#"
@@ -746,7 +763,8 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
     let mut env = Environment::new();
     env.add_function("to_db_type", to_db_type);
     env.add_filter("clean_field", clean_field);
-    env.add_template("postgres_resource", &postgres_table).unwrap();
+    env.add_template("postgres_resource", &postgres_table)
+        .unwrap();
     let tmpl = env.get_template("postgres_resource").unwrap();
     tmpl.render(value).context(JinjaSnafu {})
 }
@@ -815,7 +833,9 @@ fn insert_sql_data(
     mut conn: rusqlite::Connection,
     resource: Value,
 ) -> Result<rusqlite::Connection, Error> {
-    let tx = conn.transaction().context(RusqliteSnafu {message: "Error making transaction: "})?;
+    let tx = conn.transaction().context(RusqliteSnafu {
+        message: "Error making transaction: ",
+    })?;
 
     let mut table = resource["name"].as_str().unwrap();
 
@@ -829,7 +849,7 @@ fn insert_sql_data(
     if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
         fields_len = fields_vec.len();
         for field_value in fields_vec {
-            if let Some(field) = field_value["name"].as_str(){
+            if let Some(field) = field_value["name"].as_str() {
                 fields.push(format!("[{field}]"))
             }
         }
@@ -843,37 +863,64 @@ fn insert_sql_data(
 
     {
         let mut statement = tx
-            .prepare_cached(&format!("INSERT INTO [{table}]({fields}) VALUES ({question_marks})"))
-            .context(RusqliteSnafu {message: "Error preparing sqlite statment: "})?;
+            .prepare_cached(&format!(
+                "INSERT INTO [{table}]({fields}) VALUES ({question_marks})"
+            ))
+            .context(RusqliteSnafu {
+                message: "Error preparing sqlite statment: ",
+            })?;
 
         for row in csv_reader.into_deserialize() {
             let this_row: Vec<String> = row.context(CSVSnafu { filename: table })?;
 
             statement
                 .execute(rusqlite::params_from_iter(this_row.iter()))
-                .context(RusqliteSnafu {message: "Error inserting data to sqlite: "})?;
+                .context(RusqliteSnafu {
+                    message: "Error inserting data to sqlite: ",
+                })?;
         }
     }
-    tx.commit().context(RusqliteSnafu {message: "Error commiting sqlite: "})?;
+    tx.commit().context(RusqliteSnafu {
+        message: "Error commiting sqlite: ",
+    })?;
     Ok(conn)
 }
 
-
 pub fn csvs_to_sqlite(db_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let describe_options = describe::Options::builder().build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     let mut options = Options::builder().build();
     options.datapackage_string = true;
-    datapackage_to_sqlite_with_options(db_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_sqlite_with_options(
+        db_path,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
-pub fn csvs_to_sqlite_with_options(db_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+pub fn csvs_to_sqlite_with_options(
+    db_path: String,
+    csvs: Vec<PathBuf>,
+    mut options: Options,
+) -> Result<Value, Error> {
+    let describe_options = describe::Options::builder()
+        .threads(options.threads)
+        .stats(options.stats)
+        .stats_csv(options.stats_csv.clone())
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
 
-    datapackage_to_sqlite_with_options(db_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_sqlite_with_options(
+        db_path,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
@@ -889,7 +936,9 @@ pub fn datapackage_to_sqlite_with_options(
 ) -> Result<(), Error> {
     let (table_to_schema, ordered_tables) = get_table_info(&datapackage, &options)?;
 
-    let mut conn = Connection::open(db_path).context(RusqliteSnafu {message: "Error opening connection: "})?;
+    let mut conn = Connection::open(db_path).context(RusqliteSnafu {
+        message: "Error opening connection: ",
+    })?;
 
     conn.execute_batch(
         "PRAGMA journal_mode = OFF;
@@ -897,8 +946,9 @@ pub fn datapackage_to_sqlite_with_options(
          PRAGMA locking_mode = EXCLUSIVE;
          PRAGMA temp_store = MEMORY;",
     )
-    .context(RusqliteSnafu {message: "Error executing pragmas: "})?;
-
+    .context(RusqliteSnafu {
+        message: "Error executing pragmas: ",
+    })?;
 
     for table in ordered_tables {
         let resource = table_to_schema.get(&table).unwrap();
@@ -906,16 +956,26 @@ pub fn datapackage_to_sqlite_with_options(
         let mut existing_columns: HashMap<String, String> = HashMap::new();
 
         {
-            let mut fields_query = conn.prepare("select name, type from pragma_table_info(?)").context(RusqliteSnafu {message: "Error peparing sql"})?;
+            let mut fields_query = conn
+                .prepare("select name, type from pragma_table_info(?)")
+                .context(RusqliteSnafu {
+                    message: "Error peparing sql",
+                })?;
 
-            let mut rows = fields_query.query(
-                [&table],
-            ).context(RusqliteSnafu {message: "Error peparing sql"})?;
+            let mut rows = fields_query.query([&table]).context(RusqliteSnafu {
+                message: "Error peparing sql",
+            })?;
 
-            while let Some(row) = rows.next().context(RusqliteSnafu {message: "Error fetching rows"})? {
+            while let Some(row) = rows.next().context(RusqliteSnafu {
+                message: "Error fetching rows",
+            })? {
                 existing_columns.insert(
-                    row.get(0).context(RusqliteSnafu {message: "Error fetching rows"})?,
-                    row.get(1).context(RusqliteSnafu {message: "Error fetching rows"})?,
+                    row.get(0).context(RusqliteSnafu {
+                        message: "Error fetching rows",
+                    })?,
+                    row.get(1).context(RusqliteSnafu {
+                        message: "Error fetching rows",
+                    })?,
                 );
             }
         }
@@ -926,7 +986,9 @@ pub fn datapackage_to_sqlite_with_options(
             create = true
         } else if options.drop {
             conn.execute(&format!("drop table [{table}];"), [])
-                .context(RusqliteSnafu {message: "Error making sqlite tables: "})?;
+                .context(RusqliteSnafu {
+                    message: "Error making sqlite tables: ",
+                })?;
             create = true
         }
 
@@ -940,12 +1002,16 @@ pub fn datapackage_to_sqlite_with_options(
         if create {
             let resource_sqlite = render_sqlite_table(resource.clone())?;
 
-            conn.execute(&resource_sqlite, [])
-                .context(RusqliteSnafu {message: "Error making sqlite tables: "})?;
+            conn.execute(&resource_sqlite, []).context(RusqliteSnafu {
+                message: "Error making sqlite tables: ",
+            })?;
         } else if options.evolve {
             let (add_columns, _alter_columns) = get_column_changes(resource, existing_columns);
             for (name, type_) in add_columns {
-                conn.execute(&format!("ALTER TABLE {table} ADD [{name}] {type_}"), []).context(RusqliteSnafu {message: "Error altering sqlite tables: "})?;
+                conn.execute(&format!("ALTER TABLE {table} ADD [{name}] {type_}"), [])
+                    .context(RusqliteSnafu {
+                        message: "Error altering sqlite tables: ",
+                    })?;
             }
         }
 
@@ -958,7 +1024,8 @@ pub fn datapackage_to_sqlite_with_options(
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
+                let csv_reader =
+                    get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?
             }
             Readers::File(csv_file) => {
@@ -977,7 +1044,10 @@ pub fn datapackage_to_sqlite_with_options(
     Ok(())
 }
 
-fn get_table_info(datapackage: &str, options: &Options) -> Result<(HashMap<String, Value>, Vec<String>), Error> {
+fn get_table_info(
+    datapackage: &str,
+    options: &Options,
+) -> Result<(HashMap<String, Value>, Vec<String>), Error> {
     let mut datapackage_value = if options.datapackage_string {
         serde_json::from_str(datapackage).context(JSONDecodeSnafu {})?
     } else {
@@ -1019,7 +1089,11 @@ fn get_table_info(datapackage: &str, options: &Options) -> Result<(HashMap<Strin
         relationhip_graph.add_edge(y, x, 1);
     }
     let ordered_tables = petgraph::algo::kosaraju_scc(&relationhip_graph);
-    let tables: Vec<String> = ordered_tables.into_iter().flatten().map(|x| x.to_owned()).collect();
+    let tables: Vec<String> = ordered_tables
+        .into_iter()
+        .flatten()
+        .map(|x| x.to_owned())
+        .collect();
     Ok((table_to_schema, tables))
 }
 
@@ -1027,7 +1101,7 @@ fn create_parquet(
     file: impl std::io::Read,
     resource: Value,
     mut output_path: PathBuf,
-    options: &Options
+    options: &Options,
 ) -> Result<(), Error> {
     ensure!(
         resource["name"].is_string(),
@@ -1126,17 +1200,37 @@ fn create_parquet(
 pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_parquet_with_options(
+        PathBuf::from(output_path),
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
-pub fn csvs_to_parquet_with_options(output_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+pub fn csvs_to_parquet_with_options(
+    output_path: String,
+    csvs: Vec<PathBuf>,
+    mut options: Options,
+) -> Result<Value, Error> {
+    let describe_options = describe::Options::builder()
+        .threads(options.threads)
+        .stats(options.stats)
+        .stats_csv(options.stats_csv.clone())
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_parquet_with_options(
+        PathBuf::from(output_path),
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
@@ -1316,7 +1410,6 @@ fn create_sheet(
                 }
             }
 
-
             if INVALID_REGEX.is_match(&cell) {
                 cell = INVALID_REGEX.replace_all(&cell, "").to_string();
             }
@@ -1334,21 +1427,40 @@ fn create_sheet(
     Ok(())
 }
 
-
 pub fn csvs_to_xlsx(xlsx_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_xlsx_with_options(
+        xlsx_path,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
-pub fn csvs_to_xlsx_with_options(xlsx_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+pub fn csvs_to_xlsx_with_options(
+    xlsx_path: String,
+    csvs: Vec<PathBuf>,
+    mut options: Options,
+) -> Result<Value, Error> {
+    let describe_options = describe::Options::builder()
+        .threads(options.threads)
+        .stats(options.stats)
+        .stats_csv(options.stats_csv.clone())
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_xlsx_with_options(
+        xlsx_path,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
@@ -1392,13 +1504,17 @@ pub fn datapackage_to_xlsx_with_options(
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = get_csv_reader_builder(&options, &resource).has_headers(false).from_reader(zipped_file);
+                let csv_reader = get_csv_reader_builder(&options, &resource)
+                    .has_headers(false)
+                    .from_reader(zipped_file);
 
                 create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
             }
             Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = get_csv_reader_builder(&options, &resource).has_headers(false).from_reader(file);
+                let csv_reader = get_csv_reader_builder(&options, &resource)
+                    .has_headers(false)
+                    .from_reader(file);
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
                         filename: filename.to_string_lossy(),
@@ -1415,17 +1531,37 @@ pub fn datapackage_to_xlsx_with_options(
 pub fn csvs_to_postgres(postgres_url: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_postgres_with_options(
+        postgres_url,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
-pub fn csvs_to_postgres_with_options(postgres_url: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
+pub fn csvs_to_postgres_with_options(
+    postgres_url: String,
+    csvs: Vec<PathBuf>,
+    mut options: Options,
+) -> Result<Value, Error> {
+    let describe_options = describe::Options::builder()
+        .threads(options.threads)
+        .stats(options.stats)
+        .stats_csv(options.stats_csv.clone())
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
     options.datapackage_string = true;
-    datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
+    datapackage_to_postgres_with_options(
+        postgres_url,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
@@ -1452,8 +1588,10 @@ pub fn datapackage_to_postgres_with_options(
         } else {
             ""
         };
-        if !env.is_empty()  {
-            conf = std::env::var(env).context(EnvVarSnafu {envvar: env.to_owned()})?;
+        if !env.is_empty() {
+            conf = std::env::var(env).context(EnvVarSnafu {
+                envvar: env.to_owned(),
+            })?;
         }
     }
 
@@ -1476,27 +1614,34 @@ pub fn datapackage_to_postgres_with_options(
         let mut schema_table = format!("\"{table}\"");
 
         if !options.schema.is_empty() {
-            resource_postgres = format!("
+            resource_postgres = format!(
+                "
                 CREATE SCHEMA IF NOT EXISTS \"{schema}\";
                 set search_path = \"{schema}\";
                 {resource_postgres};
-            ", schema=options.schema);
-            schema_table = format!("\"{schema}\".\"{table}\"", schema=options.schema);
+            ",
+                schema = options.schema
+            );
+            schema_table = format!("\"{schema}\".\"{table}\"", schema = options.schema);
         }
 
-        let result = client.query_one("SELECT to_regclass($1)::TEXT", &[&schema_table]).context(PostgresSnafu {})?;
+        let result = client
+            .query_one("SELECT to_regclass($1)::TEXT", &[&schema_table])
+            .context(PostgresSnafu {})?;
         let exists: Option<String> = result.get(0);
 
         let mut create = exists.is_none();
 
         let mut drop = options.drop;
 
-        let mut existing_columns= None;
+        let mut existing_columns = None;
 
         if !create && options.evolve {
-            let result = client.query_opt(&format!("SELECT * FROM {schema_table} limit 1"), &[]).context(PostgresSnafu {})?;
-            if result.is_none(){
-                drop=true
+            let result = client
+                .query_opt(&format!("SELECT * FROM {schema_table} limit 1"), &[])
+                .context(PostgresSnafu {})?;
+            if result.is_none() {
+                drop = true
             }
             if let Some(row) = result {
                 let mut columns = HashMap::new();
@@ -1511,14 +1656,23 @@ pub fn datapackage_to_postgres_with_options(
             create = true;
             let mut drop_statement = String::new();
             if !options.schema.is_empty() {
-                write!(drop_statement, "set search_path = \"{schema}\";", schema=options.schema).unwrap();
+                write!(
+                    drop_statement,
+                    "set search_path = \"{schema}\";",
+                    schema = options.schema
+                )
+                .unwrap();
             }
             write!(drop_statement, "DROP TABLE IF EXISTS \"{table}\" CASCADE;").unwrap();
-            client.batch_execute(&drop_statement).context(PostgresSnafu {})?
+            client
+                .batch_execute(&drop_statement)
+                .context(PostgresSnafu {})?
         }
 
         if create {
-            client.batch_execute(&resource_postgres).context(PostgresSnafu {})?;
+            client
+                .batch_execute(&resource_postgres)
+                .context(PostgresSnafu {})?;
         }
 
         let mut columns = vec![];
@@ -1535,18 +1689,24 @@ pub fn datapackage_to_postgres_with_options(
             all_columns = INVALID_REGEX.replace_all(&all_columns, "").to_string();
         }
 
-
         if let Some(existing_columns) = existing_columns {
             let (add_columns, alter_columns) = get_column_changes(resource, existing_columns);
             for (name, type_) in add_columns {
-                client.batch_execute(&format!("ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}")).context(PostgresSnafu {})?;
+                client
+                    .batch_execute(&format!(
+                        "ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}"
+                    ))
+                    .context(PostgresSnafu {})?;
             }
 
             for name in alter_columns {
-                client.batch_execute(&format!("ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT")).context(PostgresSnafu {})?;
+                client
+                    .batch_execute(&format!(
+                        "ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT"
+                    ))
+                    .context(PostgresSnafu {})?;
             }
         }
-
 
         let csv_readers = get_reader(&datapackage, resource_path, &options)?;
 
@@ -1558,7 +1718,9 @@ pub fn datapackage_to_postgres_with_options(
             }
         };
 
-        let delimiter = std::str::from_utf8(&[delimiter_u8]).context(DelimeiterSnafu {})?.to_owned();
+        let delimiter = std::str::from_utf8(&[delimiter_u8])
+            .context(DelimeiterSnafu {})?
+            .to_owned();
 
         let mut quote_u8 = options.quote.unwrap_or(b'"');
         if let Some(dialect_quote) = resource["dialect"]["quote"].as_str() {
@@ -1567,7 +1729,9 @@ pub fn datapackage_to_postgres_with_options(
             }
         };
 
-        let quote = std::str::from_utf8(&[quote_u8]).context(DelimeiterSnafu {})?.to_owned();
+        let quote = std::str::from_utf8(&[quote_u8])
+            .context(DelimeiterSnafu {})?
+            .to_owned();
 
         match csv_readers {
             Readers::Zip(mut zip) => {
@@ -1576,12 +1740,16 @@ pub fn datapackage_to_postgres_with_options(
                 })?;
 
                 let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'")).context(PostgresSnafu {})?;
-                std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {filename: resource_path})?;
+                std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {
+                    filename: resource_path,
+                })?;
             }
             Readers::File(csv_file) => {
                 let (filename, mut file) = csv_file;
                 let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'")).context(PostgresSnafu {})?;
-                std::io::copy(&mut file, &mut writer).context(IoSnafu {filename: resource_path})?;
+                std::io::copy(&mut file, &mut writer).context(IoSnafu {
+                    filename: resource_path,
+                })?;
                 file.flush().unwrap();
                 writer.finish().unwrap();
 
@@ -1597,7 +1765,10 @@ pub fn datapackage_to_postgres_with_options(
     Ok(())
 }
 
-fn get_column_changes(resource: &Value, existing_columns: HashMap<String, String>) -> (Vec<(String, String)>, Vec<String>){
+fn get_column_changes(
+    resource: &Value,
+    existing_columns: HashMap<String, String>,
+) -> (Vec<(String, String)>, Vec<String>) {
     let mut add_columns = vec![];
     let mut alter_columns = vec![];
     if let Some(fields) = resource["schema"]["fields"].as_array() {
@@ -1606,26 +1777,35 @@ fn get_column_changes(resource: &Value, existing_columns: HashMap<String, String
                 if let Some(type_) = field["type"].as_str() {
                     let existing_column_type = existing_columns.get(name);
                     if let Some(existing_column_type) = existing_column_type {
-                        if to_db_type(type_.to_string(), field["format"].as_str().unwrap_or("").into()).to_lowercase() != existing_column_type.to_lowercase() {
+                        if to_db_type(
+                            type_.to_string(),
+                            field["format"].as_str().unwrap_or("").into(),
+                        )
+                        .to_lowercase()
+                            != existing_column_type.to_lowercase()
+                        {
                             alter_columns.push(name.to_owned());
                         }
                     } else {
-                        add_columns.push((name.to_owned(), to_db_type(type_.to_string(), field["format"].as_str().unwrap_or("").into())))
+                        add_columns.push((
+                            name.to_owned(),
+                            to_db_type(
+                                type_.to_string(),
+                                field["format"].as_str().unwrap_or("").into(),
+                            ),
+                        ))
                     }
                 }
             }
         }
     }
-    return (add_columns, alter_columns)
+    return (add_columns, alter_columns);
 }
-
-
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use insta::assert_yaml_snapshot;
     use parquet::file::reader::SerializedFileReader;
     use rusqlite::types::ValueRef;
@@ -1802,7 +1982,7 @@ mod tests {
                 "fixtures/add_resource/csv/games.csv".into(),
                 "fixtures/add_resource/csv/games2.csv".into(),
             ],
-            Options::builder().stats(true).build()
+            Options::builder().stats(true).build(),
         )
         .unwrap();
 
@@ -1829,8 +2009,11 @@ mod tests {
 
         csvs_to_sqlite_with_options(
             tmp.join("sqlite.db").to_string_lossy().into(),
-            vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
-            Options::builder().stats(true).build()
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
+            Options::builder().stats(true).build(),
         )
         .unwrap();
 
@@ -1842,7 +2025,10 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
 
-        let options = Options::builder().stats(true).threads(8).delimiter(Some(b','));
+        let options = Options::builder()
+            .stats(true)
+            .threads(8)
+            .delimiter(Some(b','));
 
         let datapackage = csvs_to_sqlite_with_options(
             tmp.join("sqlite.db").to_string_lossy().into(),
@@ -1851,7 +2037,7 @@ mod tests {
                 "fixtures/large/csv/daily_16.csv".into(),
                 "fixtures/large/csv/data_weather.csv".into(),
             ],
-            options.build()
+            options.build(),
         )
         .unwrap();
 
@@ -1960,7 +2146,10 @@ mod tests {
 
         csvs_to_parquet(
             tmp.join("parquet").to_string_lossy().into(),
-            vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
         )
         .unwrap();
     }
@@ -1973,11 +2162,13 @@ mod tests {
 
         csvs_to_xlsx(
             tmp.join("output.xlsx").to_string_lossy().into(),
-            vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
         )
         .unwrap();
     }
-
 
     #[test]
     fn test_large_xlsx_from_csvs() {
@@ -2054,7 +2245,6 @@ mod tests {
         .unwrap());
     }
 
-
     #[test]
     fn test_csvs_db() {
         let options = Options::builder().drop(true).schema("test".into()).build();
@@ -2069,7 +2259,6 @@ mod tests {
         )
         .unwrap();
     }
-
 
     #[test]
     fn test_csvs_db_large() {
@@ -2089,7 +2278,10 @@ mod tests {
 
     #[test]
     fn test_db_large() {
-        let options = Options::builder().drop(true).schema("large_test".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .schema("large_test".into())
+            .build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2101,7 +2293,10 @@ mod tests {
 
     #[test]
     fn test_from_env() {
-        let options = Options::builder().drop(true).schema("test_env".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .schema("test_env".into())
+            .build();
 
         std::env::set_var("POSTGRES_URL", "postgresql://test@localhost/test");
 
@@ -2112,21 +2307,23 @@ mod tests {
         )
         .unwrap();
 
-        let options = Options::builder().drop(true).schema("test_env".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .schema("test_env".into())
+            .build();
 
         std::env::set_var("DATABASE_URL", "postgresql://test@localhost/test");
 
-        datapackage_to_postgres_with_options(
-            " env  ".into(),
-            "fixtures/large".into(),
-            options,
-        )
-        .unwrap();
+        datapackage_to_postgres_with_options(" env  ".into(), "fixtures/large".into(), options)
+            .unwrap();
     }
 
     #[test]
     fn test_drop_postgres() {
-        let options = Options::builder().drop(true).schema("test_drop2".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .schema("test_drop2".into())
+            .build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2142,7 +2339,10 @@ mod tests {
 
         let mut client = Client::connect(db_url, NoTls).unwrap();
 
-        let options = Options::builder().drop(true).schema("evolve".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .schema("evolve".into())
+            .build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2151,11 +2351,20 @@ mod tests {
         )
         .unwrap();
 
-        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
-        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        let result = client
+            .query_one("select * from evolve.evolve limit 1", &[])
+            .unwrap();
+        let name_type: Vec<String> = result
+            .columns()
+            .iter()
+            .map(|a| format!("{}-{}", a.name(), a.type_()))
+            .collect();
         insta::assert_yaml_snapshot!(name_type);
 
-        let options = Options::builder().evolve(true).schema("evolve".into()).build();
+        let options = Options::builder()
+            .evolve(true)
+            .schema("evolve".into())
+            .build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2164,11 +2373,20 @@ mod tests {
         )
         .unwrap();
 
-        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
-        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        let result = client
+            .query_one("select * from evolve.evolve limit 1", &[])
+            .unwrap();
+        let name_type: Vec<String> = result
+            .columns()
+            .iter()
+            .map(|a| format!("{}-{}", a.name(), a.type_()))
+            .collect();
         insta::assert_yaml_snapshot!(name_type);
 
-        let options = Options::builder().evolve(true).schema("evolve".into()).build();
+        let options = Options::builder()
+            .evolve(true)
+            .schema("evolve".into())
+            .build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2177,11 +2395,20 @@ mod tests {
         )
         .unwrap();
 
-        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
-        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        let result = client
+            .query_one("select * from evolve.evolve limit 1", &[])
+            .unwrap();
+        let name_type: Vec<String> = result
+            .columns()
+            .iter()
+            .map(|a| format!("{}-{}", a.name(), a.type_()))
+            .collect();
         insta::assert_yaml_snapshot!(name_type);
 
-        let options = Options::builder().evolve(true).schema("evolve".into()).build();
+        let options = Options::builder()
+            .evolve(true)
+            .schema("evolve".into())
+            .build();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2190,10 +2417,15 @@ mod tests {
         )
         .unwrap();
 
-        let result = client.query_one("select * from evolve.evolve limit 1", &[]).unwrap();
-        let name_type: Vec<String> = result.columns().iter().map(|a| format!("{}-{}", a.name(), a.type_())).collect();
+        let result = client
+            .query_one("select * from evolve.evolve limit 1", &[])
+            .unwrap();
+        let name_type: Vec<String> = result
+            .columns()
+            .iter()
+            .map(|a| format!("{}-{}", a.name(), a.type_()))
+            .collect();
         insta::assert_yaml_snapshot!(name_type);
-
     }
 
     #[test]
@@ -2264,7 +2496,6 @@ mod tests {
 
         let output = check_evolve();
         insta::assert_yaml_snapshot!(output);
-
     }
 
     fn check_evolve() -> Vec<Vec<String>> {
@@ -2272,20 +2503,21 @@ mod tests {
         let mut stmt = conn.prepare("select * from evolve").unwrap();
         let count = stmt.column_count();
         let mut rows = stmt.query([]).unwrap();
-        let mut output= vec![];
+        let mut output = vec![];
         while let Some(row) = rows.next().unwrap() {
             let mut row_data: Vec<String> = vec![];
             for i in 0..count {
                 let value = row.get_ref_unwrap(i);
                 match value {
-                    ValueRef::Text(text) => {row_data.push(std::str::from_utf8(text).unwrap().to_owned())}
-                    ValueRef::Integer(num) => {row_data.push(num.to_string())}
-                    other => {row_data.push(format!("{:?}", other))}
+                    ValueRef::Text(text) => {
+                        row_data.push(std::str::from_utf8(text).unwrap().to_owned())
+                    }
+                    ValueRef::Integer(num) => row_data.push(num.to_string()),
+                    other => row_data.push(format!("{:?}", other)),
                 }
             }
             output.push(row_data);
         }
         output
     }
-
 }
