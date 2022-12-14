@@ -155,7 +155,7 @@ impl Describer {
             empty_count: 0,
             descriptions: descriptions(),
             to_delete: vec![],
-            options: options,
+            options,
             no_string_stats: false,
             unique_to_large: false,
             string_freq: counter::Counter::new(),
@@ -173,8 +173,8 @@ impl Describer {
 
     pub fn merge(&mut self, other: Describer) {
         if self.options.mergable_stats {
-            self.count = self.count + other.count;
-            self.empty_count = self.empty_count + other.empty_count;
+            self.count += other.count;
+            self.empty_count += other.empty_count;
             self.max_len = max(self.max_len, other.max_len);
             self.min_len = match (self.min_len, other.min_len) {
                 (Some(x), Some(y)) => Some(min(x, y)),
@@ -199,7 +199,7 @@ impl Describer {
                 );
             }
             self.loglog.merge(&other.loglog);
-            self.sum = self.sum + other.sum;
+            self.sum += other.sum;
 
             self.max_number = match (self.max_number, other.max_number) {
                 (Some(x), Some(y)) => Some(x.max(y)),
@@ -262,7 +262,7 @@ impl Describer {
             return ("array", "array".to_owned());
         }
 
-        return ("string", "string".to_owned());
+        ("string", "string".to_owned())
     }
 
     pub fn stats(&mut self) -> serde_json::Value {
@@ -296,9 +296,9 @@ impl Describer {
 
         let empty = vec![];
         let min_string =
-            String::from_utf8_lossy(&self.minmax_str.min().unwrap_or(&empty)).to_string();
+            String::from_utf8_lossy(self.minmax_str.min().unwrap_or(&empty)).to_string();
         let max_string =
-            String::from_utf8_lossy(&self.minmax_str.max().unwrap_or(&empty)).to_string();
+            String::from_utf8_lossy(self.minmax_str.max().unwrap_or(&empty)).to_string();
 
         let is_number = ["number", "integer"].contains(&self.guess_type().0);
 
@@ -382,16 +382,12 @@ impl Describer {
         for num in 0usize..self.descriptions.len() {
             let (type_name, type_description) = self.descriptions[num];
 
-            if type_name == "boolean" {
-                if !self.check_boolean(string) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "boolean" && !self.check_boolean(string) {
+                self.to_delete.push(num)
             }
 
-            if type_name == "integer" {
-                if !self.check_integer(string) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "integer" && !self.check_integer(string) {
+                self.to_delete.push(num)
             }
 
             if type_name == "number" {
@@ -409,7 +405,7 @@ impl Describer {
                             Some(number.max(self.max_number.expect("number already checked")));
                         self.min_number =
                             Some(number.min(self.min_number.expect("number already checked")));
-                        self.sum = self.sum + number;
+                        self.sum += number;
                     }
                 } else {
                     self.to_delete.push(num);
@@ -417,40 +413,28 @@ impl Describer {
                 }
             }
 
-            if type_name == "datetime" {
-                if !self.check_datetime(string, type_description) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "datetime" && !self.check_datetime(string, type_description) {
+                self.to_delete.push(num)
             }
 
-            if type_name == "datetime_tz" {
-                if !self.check_datetime_tz(string, type_description) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "datetime_tz" && !self.check_datetime_tz(string, type_description) {
+                self.to_delete.push(num)
             }
 
-            if type_name == "date" {
-                if !self.check_date(string, type_description) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "date" && !self.check_date(string, type_description) {
+                self.to_delete.push(num)
             }
 
-            if type_name == "time" {
-                if !self.check_time(string, type_description) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "time" && !self.check_time(string, type_description) {
+                self.to_delete.push(num)
             }
 
-            if type_name == "object" {
-                if !self.check_json_object(string) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "object" && !self.check_json_object(string) {
+                self.to_delete.push(num)
             }
 
-            if type_name == "array" {
-                if !self.check_json_array(string) {
-                    self.to_delete.push(num)
-                }
+            if type_name == "array" && !self.check_json_array(string) {
+                self.to_delete.push(num)
             }
         }
 
@@ -461,11 +445,7 @@ impl Describer {
     }
 
     fn check_integer(&mut self, string: &str) -> bool {
-        if let Ok(_) = string.parse::<i128>() {
-            true
-        } else {
-            false
-        }
+        string.parse::<i128>().is_ok()
     }
 
     fn check_number(&mut self, string: &str) -> Option<f64> {
@@ -485,49 +465,26 @@ impl Describer {
 
     fn check_datetime_tz(&mut self, string: &str, format: &str) -> bool {
         if format == "rfc2822" {
-            if let Ok(_) = DateTime::parse_from_rfc2822(string) {
-                return true;
-            } else {
-                return false;
-            }
+            DateTime::parse_from_rfc2822(string).is_ok()
         } else if format == "rfc3339" {
-            if let Ok(_) = DateTime::parse_from_rfc3339(string) {
-                return true;
-            } else {
-                return false;
-            }
+            DateTime::parse_from_rfc3339(string).is_ok()
+        } else if DateTime::parse_from_str(string, format).is_ok() {
+            true
         } else {
-            if let Ok(_) = DateTime::parse_from_str(string, format) {
-                println!("true");
-                return true;
-            } else {
-                return false;
-            }
+            false
         }
     }
 
     fn check_datetime(&mut self, string: &str, format: &str) -> bool {
-        if let Ok(_) = chrono::Utc.datetime_from_str(string, format) {
-            return true;
-        } else {
-            return false;
-        }
+        chrono::Utc.datetime_from_str(string, format).is_ok()
     }
 
     fn check_date(&mut self, string: &str, format: &str) -> bool {
-        if let Ok(_) = chrono::NaiveDate::parse_from_str(string, format) {
-            return true;
-        } else {
-            return false;
-        }
+        chrono::NaiveDate::parse_from_str(string, format).is_ok()
     }
 
     fn check_time(&mut self, string: &str, format: &str) -> bool {
-        if let Ok(_) = chrono::NaiveTime::parse_from_str(string, format) {
-            return true;
-        } else {
-            return false;
-        }
+        chrono::NaiveTime::parse_from_str(string, format).is_ok()
     }
 
     fn check_json_array(&mut self, string: &str) -> bool {
@@ -535,9 +492,9 @@ impl Describer {
             if value.is_array() {
                 return true;
             }
-            return false;
+            false
         } else {
-            return false;
+            false
         }
     }
 
@@ -546,9 +503,9 @@ impl Describer {
             if value.is_object() {
                 return true;
             }
-            return false;
+            false
         } else {
-            return false;
+            false
         }
     }
 }

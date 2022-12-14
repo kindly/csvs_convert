@@ -160,7 +160,7 @@ pub fn describe_parallel(
         fields.push(field);
     }
 
-    return Ok(json!({"row_count": idx.len() - 1,"fields": fields}));
+    Ok(json!({"row_count": idx.len() - 1,"fields": fields}))
 }
 
 #[cfg(test)]
@@ -189,7 +189,7 @@ mod tests {
         let reader = csv::Reader::from_path("fixtures/large/csv/data.csv").unwrap();
         let metadata = describe(reader, Options::builder().build()).unwrap();
 
-        assert_eq!(metadata.clone(), metadata_multi);
+        assert_eq!(metadata, metadata_multi);
 
         insta::assert_yaml_snapshot!(metadata);
     }

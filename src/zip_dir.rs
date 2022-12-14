@@ -44,7 +44,7 @@ pub fn zip_dir(src_dir: &Path, dst_file: &Path) -> zip::result::ZipResult<()> {
     }
 
     let path = Path::new(dst_file);
-    let file = File::create(&path)?;
+    let file = File::create(path)?;
 
     let walkdir = WalkDir::new(src_dir);
     let it = walkdir.into_iter();

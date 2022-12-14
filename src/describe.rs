@@ -52,7 +52,7 @@ fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
             break;
         }
     }
-    return Ok(found);
+    Ok(found)
 }
 
 pub fn get_csv_reader_builder(
@@ -123,7 +123,7 @@ pub fn describe_file(
         .to_string_lossy()
         .into_owned();
 
-    let file_no_extension = file_name.split(".").next();
+    let file_no_extension = file_name.split('.').next();
 
     let delimiter = String::from_utf8_lossy(&[delimiter]).to_string();
     let quote = String::from_utf8_lossy(&[quote]).to_string();
@@ -141,7 +141,7 @@ pub fn describe_file(
             "quoteChar": quote
         }
     });
-    return Ok(resource);
+    Ok(resource)
 }
 
 pub fn describe_files(

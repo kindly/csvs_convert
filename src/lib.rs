@@ -272,12 +272,12 @@ fn make_resource_from_mergable(mut resource: Value) -> Result<Value, Error> {
 
 fn datapackage_json_to_value(filename: &str) -> Result<Value, Error> {
     if filename.ends_with(".json") {
-        let file = File::open(&filename).context(IoSnafu { filename })?;
+        let file = File::open(filename).context(IoSnafu { filename })?;
         let json: Value =
             serde_json::from_reader(BufReader::new(file)).context(JSONSnafu { filename })?;
         Ok(json)
     } else if filename.ends_with(".zip") {
-        let file = File::open(&filename).context(IoSnafu { filename })?;
+        let file = File::open(filename).context(IoSnafu { filename })?;
         let mut zip = zip::ZipArchive::new(file).context(ZipSnafu { filename })?;
         let zipped_file = zip
             .by_name("datapackage.json")
@@ -418,14 +418,14 @@ fn get_reader(file: &str, resource_path: &str, options: &Options) -> Result<Read
     if options.datapackage_string {
         Ok(Readers::File((
             resource_path.into(),
-            File::open(&resource_path).context(IoSnafu {
+            File::open(resource_path).context(IoSnafu {
                 filename: resource_path,
             })?,
         )))
     } else if file.ends_with(".json") {
         let mut file_pathbuf = PathBuf::from(file);
         file_pathbuf.pop();
-        file_pathbuf.push(&resource_path);
+        file_pathbuf.push(resource_path);
         Ok(Readers::File((
             file_pathbuf.clone(),
             File::open(&file_pathbuf).context(IoSnafu {
@@ -433,12 +433,12 @@ fn get_reader(file: &str, resource_path: &str, options: &Options) -> Result<Read
             })?,
         )))
     } else if file.ends_with(".zip") {
-        let zip_file = File::open(&file).context(IoSnafu { filename: file })?;
+        let zip_file = File::open(file).context(IoSnafu { filename: file })?;
         let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu { filename: file })?;
         Ok(Readers::Zip(zip))
     } else if PathBuf::from(&file).is_dir() {
         let file_pathbuf = PathBuf::from(file);
-        let file_pathbuf = file_pathbuf.join(&resource_path);
+        let file_pathbuf = file_pathbuf.join(resource_path);
         Ok(Readers::File((
             file_pathbuf.clone(),
             File::open(&file_pathbuf).context(IoSnafu {
@@ -575,14 +575,14 @@ pub fn merge_datapackage_with_options(
                         .by_name(&resource_path)
                         .context(ZipSnafu { filename: file })?;
                     let csv_reader =
-                        get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
+                        get_csv_reader_builder(&options, resource).from_reader(zipped_file);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                 }
                 Readers::File(file_reader) => {
                     let (filename, file_reader) = file_reader;
                     let csv_reader =
-                        get_csv_reader_builder(&options, &resource).from_reader(file_reader);
+                        get_csv_reader_builder(&options, resource).from_reader(file_reader);
                     csv_output =
                         write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
                     if options.delete_input_csv {
@@ -615,14 +615,14 @@ fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBui
     let mut delimiter = options.delimiter.unwrap_or(b',');
     if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
         if dialect_delimiter.as_bytes().len() == 1 {
-            delimiter = *dialect_delimiter.as_bytes().get(0).unwrap()
+            delimiter = *dialect_delimiter.as_bytes().first().unwrap()
         }
     };
 
     let mut quote = options.quote.unwrap_or(b'"');
     if let Some(dialect_quote) = resource["dialect"]["quoteChar"].as_str() {
         if dialect_quote.as_bytes().len() == 1 {
-            quote = *dialect_quote.as_bytes().get(0).unwrap()
+            quote = *dialect_quote.as_bytes().first().unwrap()
         }
     };
 
@@ -982,7 +982,7 @@ pub fn datapackage_to_sqlite_with_options(
 
         let mut create = false;
 
-        if existing_columns.len() == 0 {
+        if existing_columns.is_empty() {
             create = true
         } else if options.drop {
             conn.execute(&format!("drop table [{table}];"), [])
@@ -1025,12 +1025,12 @@ pub fn datapackage_to_sqlite_with_options(
                     filename: &datapackage,
                 })?;
                 let csv_reader =
-                    get_csv_reader_builder(&options, &resource).from_reader(zipped_file);
+                    get_csv_reader_builder(&options, resource).from_reader(zipped_file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?
             }
             Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = get_csv_reader_builder(&options, &resource).from_reader(file);
+                let csv_reader = get_csv_reader_builder(&options, resource).from_reader(file);
                 conn = insert_sql_data(csv_reader, conn, resource.clone())?;
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {
@@ -1157,7 +1157,7 @@ fn create_parquet(
     let mut delimiter = options.delimiter.unwrap_or(b',');
     if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
         if dialect_delimiter.as_bytes().len() == 1 {
-            delimiter = *dialect_delimiter.as_bytes().get(0).unwrap()
+            delimiter = *dialect_delimiter.as_bytes().first().unwrap()
         }
     };
 
@@ -1504,7 +1504,7 @@ pub fn datapackage_to_xlsx_with_options(
                 let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
-                let csv_reader = get_csv_reader_builder(&options, &resource)
+                let csv_reader = get_csv_reader_builder(&options, resource)
                     .has_headers(false)
                     .from_reader(zipped_file);
 
@@ -1512,7 +1512,7 @@ pub fn datapackage_to_xlsx_with_options(
             }
             Readers::File(csv_file) => {
                 let (filename, file) = csv_file;
-                let csv_reader = get_csv_reader_builder(&options, &resource)
+                let csv_reader = get_csv_reader_builder(&options, resource)
                     .has_headers(false)
                     .from_reader(file);
                 if options.delete_input_csv {
@@ -1714,7 +1714,7 @@ pub fn datapackage_to_postgres_with_options(
 
         if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
             if dialect_delimiter.as_bytes().len() == 1 {
-                delimiter_u8 = *dialect_delimiter.as_bytes().get(0).unwrap()
+                delimiter_u8 = *dialect_delimiter.as_bytes().first().unwrap()
             }
         };
 
@@ -1725,7 +1725,7 @@ pub fn datapackage_to_postgres_with_options(
         let mut quote_u8 = options.quote.unwrap_or(b'"');
         if let Some(dialect_quote) = resource["dialect"]["quote"].as_str() {
             if dialect_quote.as_bytes().len() == 1 {
-                quote_u8 = *dialect_quote.as_bytes().get(0).unwrap()
+                quote_u8 = *dialect_quote.as_bytes().first().unwrap()
             }
         };
 
@@ -1799,7 +1799,7 @@ fn get_column_changes(
             }
         }
     }
-    return (add_columns, alter_columns);
+    (add_columns, alter_columns)
 }
 
 #[cfg(test)]
