@@ -1,0 +1,271 @@
+---
+source: src/describe.rs
+expression: describe
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: data
+    row_count: 83192.0
+    schema:
+      fields:
+        - name: _link
+          type: string
+          format: string
+          stats:
+            min_len: 8.0
+            max_len: 12.0
+            min_str: 0.data.0
+            max_str: 999.data.9
+            min_number: ~
+            max_number: ~
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 82252.0
+            sum: ~
+            mean: ~
+        - name: _link_daily_16
+          type: integer
+          format: integer
+          stats:
+            min_len: 1.0
+            max_len: 4.0
+            min_str: "0"
+            max_str: "999"
+            min_number: 0.0
+            max_number: 4998.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 5102.0
+            sum: 208553143.0
+            mean: 2507.0
+        - name: dt
+          type: integer
+          format: integer
+          stats:
+            min_len: 10.0
+            max_len: 10.0
+            min_str: "1489395600"
+            max_str: "1490788800"
+            min_number: 1489395600.0
+            max_number: 1490788800.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 333.0
+            sum: 123963937516800.0
+            mean: 1490094450.0
+        - name: rain
+          type: number
+          format: number
+          stats:
+            min_len: 1.0
+            max_len: 5.0
+            min_str: "0.2"
+            max_str: "95.19"
+            min_number: 0.0
+            max_number: 95.0
+            count: 50409.0
+            empty_count: 32783.0
+            estimate_unique: 2186.0
+            sum: 206983.0
+            mean: 4.0
+        - name: pressure
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 7.0
+            min_str: "1000"
+            max_str: "999.99"
+            min_number: 545.0
+            max_number: 1050.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 12531.0
+            sum: 81331797.0
+            mean: 978.0
+        - name: humidity
+          type: integer
+          format: integer
+          stats:
+            min_len: 1.0
+            max_len: 3.0
+            min_str: "0"
+            max_str: "99"
+            min_number: 0.0
+            max_number: 100.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 93.0
+            sum: 1152691.0
+            mean: 14.0
+        - name: uvi
+          type: number
+          format: number
+          stats:
+            min_len: 1.0
+            max_len: 5.0
+            min_str: "0.43"
+            max_str: "9.99"
+            min_number: 0.0
+            max_number: 18.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 1593.0
+            sum: 456545.0
+            mean: 5.0
+        - name: speed
+          type: number
+          format: number
+          stats:
+            min_len: 1.0
+            max_len: 5.0
+            min_str: "0.04"
+            max_str: "9.99"
+            min_number: 0.0
+            max_number: 19.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 1349.0
+            sum: 337692.0
+            mean: 4.0
+        - name: deg
+          type: integer
+          format: integer
+          stats:
+            min_len: 1.0
+            max_len: 3.0
+            min_str: "0"
+            max_str: "99"
+            min_number: 0.0
+            max_number: 360.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 362.0
+            sum: 14358770.0
+            mean: 173.0
+        - name: clouds
+          type: integer
+          format: integer
+          stats:
+            min_len: 1.0
+            max_len: 3.0
+            min_str: "0"
+            max_str: "99"
+            min_number: 0.0
+            max_number: 100.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 102.0
+            sum: 3061459.0
+            mean: 37.0
+        - name: temp_day
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 6.0
+            min_str: "246.7"
+            max_str: "316.53"
+            min_number: 247.0
+            max_number: 317.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 4750.0
+            sum: 23834089.0
+            mean: 286.0
+        - name: temp_min
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 6.0
+            min_str: "239.15"
+            max_str: "303"
+            min_number: 239.0
+            max_number: 303.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 4667.0
+            sum: 23280138.0
+            mean: 280.0
+        - name: temp_max
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 6.0
+            min_str: "246.7"
+            max_str: "316.53"
+            min_number: 247.0
+            max_number: 317.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 4752.0
+            sum: 23873360.0
+            mean: 287.0
+        - name: temp_night
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 6.0
+            min_str: "240.31"
+            max_str: "312.75"
+            min_number: 240.0
+            max_number: 313.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 4550.0
+            sum: 23409729.0
+            mean: 281.0
+        - name: temp_eve
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 6.0
+            min_str: "246.7"
+            max_str: "313.01"
+            min_number: 247.0
+            max_number: 313.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 4663.0
+            sum: 23692753.0
+            mean: 285.0
+        - name: temp_morn
+          type: number
+          format: number
+          stats:
+            min_len: 3.0
+            max_len: 6.0
+            min_str: "239.15"
+            max_str: "314.62"
+            min_number: 239.0
+            max_number: 315.0
+            count: 83192.0
+            empty_count: 0.0
+            estimate_unique: 4684.0
+            sum: 23355239.0
+            mean: 281.0
+        - name: snow
+          type: number
+          format: number
+          stats:
+            min_len: 1.0
+            max_len: 5.0
+            min_str: "0"
+            max_str: "9.91"
+            min_number: 0.0
+            max_number: 47.0
+            count: 13273.0
+            empty_count: 69919.0
+            estimate_unique: 686.0
+            sum: 12980.0
+            mean: 1.0
+    path: fixtures/large/csv/data.csv
+    dialect:
+      delimiter: ","
+      quoteChar: "\""
+

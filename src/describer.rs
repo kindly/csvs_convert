@@ -2,6 +2,9 @@ use pdatastructs::hyperloglog::HyperLogLog;
 use pdatastructs::tdigest;
 use stats::OnlineStats;
 use pdatastructs::num_traits::ToPrimitive;
+use typed_builder::TypedBuilder;
+use std::cmp::{min, max};
+use std::collections::HashSet;
 
 use chrono::prelude::*;
 use chrono::DateTime;
@@ -125,18 +128,29 @@ fn time_formats() -> Vec<&'static str> {
     ]
 }
 
+#[derive(Default, Debug, TypedBuilder, Clone)]
+pub struct Options {
+    #[builder(default)]
+    pub stats: bool,
+    #[builder(default)]
+    pub mergable_stats: bool,
+}
+
 #[derive(Debug)]
 pub struct Describer {
     pub count: usize,
     pub empty_count: usize,
     descriptions: Vec<(&'static str, &'static str)>,
-    pub calculate_stats: bool,
+    pub options: Options,
     to_delete: Vec<usize>,
     no_string_stats: bool,
     pub unique_to_large: bool,
     pub string_freq: counter::Counter<String>,
-    pub max_len: usize,
-    pub min_len: usize,
+    pub max_len: Option<usize>,
+    pub min_len: Option<usize>,
+    pub max_number: Option<f64>,
+    pub min_number: Option<f64>,
+    pub sum: f64,
     pub minmax_str: stats::MinMax<Vec<u8>>,
     pub loglog: HyperLogLog<str>,
     pub tdigest: tdigest::TDigest<tdigest::K1>,
@@ -145,24 +159,68 @@ pub struct Describer {
 
 impl Describer {
     pub fn new() -> Describer {
-        let scale_function = tdigest::K1::new(100.into());
+        let options = Options::builder().build();
+        Describer::new_with_options(options) 
+    }
 
+    pub fn new_with_options(options: Options) -> Describer {
+        let scale_function = tdigest::K1::new(100.into());
         return Describer {
             count: 0,
             empty_count: 0,
             descriptions: descriptions(),
             to_delete: vec![],
-            calculate_stats: true,
+            options: options,
             no_string_stats: false,
             unique_to_large: false,
             string_freq: counter::Counter::new(),
-            max_len: 0,
-            min_len: 0,
+            max_len: None,
+            min_len: None,
+            max_number: None,
+            min_number: None,
+            sum: 0_f64,
             minmax_str: stats::MinMax::new(),
             loglog: HyperLogLog::new(12),
             tdigest: tdigest::TDigest::new(scale_function, 1000),
             stats: OnlineStats::new()
         }
+    }
+
+    pub fn merge(&mut self, other: Describer) {
+        if self.options.mergable_stats {
+            self.count = self.count + other.count;
+            self.empty_count = self.empty_count + other.empty_count;
+            self.max_len = max(self.max_len, other.max_len);
+            self.min_len = match (self.min_len, other.min_len) {
+                (Some(x), Some(y)) => {Some(min(x,y))},
+                (None, Some(y)) => {Some(y)},
+                _ => {self.min_len}
+            };
+
+            if other.count > 0 {
+                self.minmax_str.add(other.minmax_str.min().expect("checked for not sample").clone());
+                self.minmax_str.add(other.minmax_str.max().expect("checked for not sample").clone());
+            }
+            self.loglog.merge(&other.loglog);
+            self.sum = self.sum + other.sum;
+
+            self.max_number = match (self.max_number, other.max_number) {
+                (Some(x), Some(y)) => {Some(x.max(y))},
+                (None, Some(y)) => {Some(y)},
+                _ => {self.max_number}
+            };
+
+            self.min_number = match (self.min_number, other.min_number) {
+                (Some(x), Some(y)) => {Some(x.min(y))},
+                (None, Some(y)) => {Some(y)},
+                _ => {self.min_number}
+            };
+
+        }
+
+        let self_desc: HashSet<_> = self.descriptions.iter().collect();
+        let other_desc: HashSet<_> = other.descriptions.iter().collect();
+        self.descriptions = self_desc.intersection(&other_desc).into_iter().map(|a| {**a}).collect();
     }
 
     pub fn guess_type(&mut self) -> (&'static str, String) {
@@ -209,7 +267,7 @@ impl Describer {
 
     pub fn stats(&mut self) -> serde_json::Value {
 
-        if !self.calculate_stats {
+        if !self.options.stats && !self.options.mergable_stats {
             return serde_json::json!({})
         }
 
@@ -235,28 +293,44 @@ impl Describer {
 
         let is_number = ["number", "integer"].contains(&self.guess_type().0);
 
-        json!({
-            "min_len": self.min_len,
-            "max_len": self.max_len,
-            "min_str": if min_string.is_empty() {None} else {Some(min_string)},
-            "max_str": if max_string.is_empty() {None} else {Some(max_string)},
-            "count": self.count,
-            "empty_count": self.empty_count,
-            "exact_unique": if self.string_freq.len() == 0 {None} else {Some(self.string_freq.len())}, 
-            "estimate_unique": if self.string_freq.len() == 0 {Some(self.loglog.count())} else {None},
-            "top_20": if top_20.is_empty() {None} else {Some(top_20)},
-            "sum": if !is_number {None} else {Some(self.stats.mean() * self.stats.len().to_f64().unwrap_or(0_f64))},
-            "mean": if !is_number {None} else {Some(self.stats.mean())},
-            "variance": if !is_number {None} else {Some(self.stats.variance())},
-            "stddev": if !is_number {None} else {Some(self.stats.stddev())},
-            "min_number": if self.tdigest.is_empty() {None} else {Some(self.tdigest.min())},
-            "max_number": if self.tdigest.is_empty() {None} else {Some(self.tdigest.max())},
-            "median": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.5))},
-            "lower_quartile": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.25))},
-            "upper_quartile": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.75))},
-            "deciles": deciles,
-            "centiles": centiles,
-        })
+        if self.options.mergable_stats {
+            json!({
+                "min_len": self.min_len,
+                "max_len": self.max_len,
+                "min_str": if min_string.is_empty() {None} else {Some(min_string)},
+                "max_str": if max_string.is_empty() {None} else {Some(max_string)},
+                "min_number": self.min_number,
+                "max_number": self.max_number,
+                "count": self.count,
+                "empty_count": self.empty_count,
+                "estimate_unique": if self.string_freq.len() == 0 {Some(self.loglog.count())} else {None},
+                "sum": if !is_number {None} else {Some(self.sum)},
+                "mean": if !is_number {None} else {Some(self.sum / (self.count as f64))},
+            })
+        } else {
+            json!({
+                "min_len": self.min_len,
+                "max_len": self.max_len,
+                "min_str": if min_string.is_empty() {None} else {Some(min_string)},
+                "max_str": if max_string.is_empty() {None} else {Some(max_string)},
+                "count": self.count,
+                "empty_count": self.empty_count,
+                "exact_unique": if self.string_freq.len() == 0 {None} else {Some(self.string_freq.len())}, 
+                "estimate_unique": if self.string_freq.len() == 0 {Some(self.loglog.count())} else {None},
+                "top_20": if top_20.is_empty() {None} else {Some(top_20)},
+                "sum": if !is_number {None} else {Some(self.stats.mean() * self.stats.len().to_f64().unwrap_or(0_f64))},
+                "mean": if !is_number {None} else {Some(self.stats.mean())},
+                "variance": if !is_number {None} else {Some(self.stats.variance())},
+                "stddev": if !is_number {None} else {Some(self.stats.stddev())},
+                "min_number": if self.tdigest.is_empty() {None} else {Some(self.tdigest.min())},
+                "max_number": if self.tdigest.is_empty() {None} else {Some(self.tdigest.max())},
+                "median": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.5))},
+                "lower_quartile": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.25))},
+                "upper_quartile": if self.tdigest.is_empty() {None} else {Some(self.tdigest.quantile(0.75))},
+                "deciles": deciles,
+                "centiles": centiles,
+            })
+        }
 
     }
 
@@ -267,14 +341,14 @@ impl Describer {
         }
         self.count += 1;
 
-        if self.calculate_stats {
-            if self.max_len == 0 {
-                self.max_len = string.len();
-                self.min_len = string.len();
+        if self.options.stats {
+            if self.max_len.is_none() {
+                self.max_len = Some(string.len());
+                self.min_len = Some(string.len());
             }
 
-            self.max_len = std::cmp::max(self.max_len, string.len());
-            self.min_len = std::cmp::min(self.min_len, string.len());
+            self.max_len = Some(max(self.max_len.expect("checked_for_none"), string.len()));
+            self.min_len = Some(min(self.min_len.expect("checked_for_none"), string.len()));
 
             self.minmax_str.add(string.as_bytes().to_vec());
 
@@ -285,7 +359,9 @@ impl Describer {
                     self.no_string_stats = true;
                     self.string_freq.clear();
                 } else if !self.unique_to_large {
-                    self.string_freq.update([string.into()]);
+                    if !self.options.mergable_stats {
+                        self.string_freq.update([string.into()]);
+                    }
                     if self.string_freq.len() > 200 {
                         self.unique_to_large = true;
                         self.no_string_stats = true;
@@ -313,9 +389,18 @@ impl Describer {
 
             if type_name == "number" {
                 if let Some(number) = self.check_number(string) {
-                    if self.calculate_stats && !number.is_nan() {
-                        self.tdigest.insert(number);
+                    if self.options.stats && !number.is_nan() {
+                        if !self.options.mergable_stats {
+                            self.tdigest.insert(number);
+                        }
                         self.stats.add(number);
+                        if self.max_number.is_none() {
+                            self.max_number = Some(number);
+                            self.min_number = Some(number);
+                        }
+                        self.max_number = Some(number.max(self.max_number.expect("number already checked")));
+                        self.min_number = Some(number.min(self.min_number.expect("number already checked")));
+                        self.sum = self.sum + number;
                     }
                 } else {
                     self.to_delete.push(num);
@@ -460,7 +545,7 @@ impl Describer {
 
 #[cfg(test)]
 mod tests {
-    use super::Describer; //, datetime_formats, datetime_tz_formats, date_formats};
+    use super::*; //, datetime_formats, datetime_tz_formats, date_formats};
     //use chrono::prelude::*;
 
     #[test]
@@ -561,7 +646,7 @@ mod tests {
 
     #[test]
     fn guess_date() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         describer.process("2014-11-28");
         assert_eq!(describer.guess_type().0, "date");
         describer.process("2014-13-28");
@@ -582,7 +667,7 @@ mod tests {
 
     #[test]
     fn guess_time() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         describer.process("12:30");
         assert_eq!(describer.guess_type().0, "time");
         describer.process("25:00");
@@ -591,7 +676,7 @@ mod tests {
 
     #[test]
     fn json_array() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         describer.process("[]");
         describer.process("[1,2,3]");
         assert_eq!(describer.guess_type().0, "array");
@@ -601,7 +686,7 @@ mod tests {
 
     #[test]
     fn json_object() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         describer.process("{}");
         describer.process("{\"a\": \"b\"}");
         assert_eq!(describer.guess_type().0, "object");
@@ -611,7 +696,7 @@ mod tests {
 
     #[test]
     fn empty_count() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         describer.process("");
         describer.process("");
         describer.process("");
@@ -622,7 +707,7 @@ mod tests {
 
     #[test]
     fn stats_string() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         describer.process("a");
         describer.process("b");
         describer.process("c");
@@ -632,7 +717,7 @@ mod tests {
 
     #[test]
     fn stats_string_too_many_unique() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         for i in 0..1001 {
             describer.process(&format!("num-{i}"))
         }
@@ -643,7 +728,7 @@ mod tests {
 
     #[test]
     fn stats_string_too_long() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
         let mut long = String::new();
         for _ in 0..101 {
             long.push('a');
@@ -655,7 +740,7 @@ mod tests {
 
     #[test]
     fn stats_number() {
-        let mut describer = Describer::new();
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
 
         for num in 0..1001 {
             describer.process(&num.to_string())

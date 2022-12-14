@@ -1,0 +1,67 @@
+---
+source: src/describe.rs
+expression: describe
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: data
+    row_count: 83192
+    schema:
+      fields:
+        - name: _link
+          type: string
+          format: string
+        - name: _link_daily_16
+          type: integer
+          format: integer
+        - name: dt
+          type: integer
+          format: integer
+        - name: rain
+          type: number
+          format: number
+        - name: pressure
+          type: number
+          format: number
+        - name: humidity
+          type: integer
+          format: integer
+        - name: uvi
+          type: number
+          format: number
+        - name: speed
+          type: number
+          format: number
+        - name: deg
+          type: integer
+          format: integer
+        - name: clouds
+          type: integer
+          format: integer
+        - name: temp_day
+          type: number
+          format: number
+        - name: temp_min
+          type: number
+          format: number
+        - name: temp_max
+          type: number
+          format: number
+        - name: temp_night
+          type: number
+          format: number
+        - name: temp_eve
+          type: number
+          format: number
+        - name: temp_morn
+          type: number
+          format: number
+        - name: snow
+          type: number
+          format: number
+    path: fixtures/large/csv/data.csv
+    dialect:
+      delimiter: ","
+      quoteChar: "\""
+

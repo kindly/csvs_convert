@@ -1,5 +1,5 @@
-pub use crate::describer::Describer;
-pub use crate::describe_csv::{describe as describe_csv, describe_parallel, describe_parallel_rows};
+pub use crate::describer::{Describer, Options as DescriberOptions};
+pub use crate::describe_csv::{describe as describe_csv, describe_parallel};
 use std::path::PathBuf;
 use pathdiff::diff_paths;
 use thiserror::Error;
@@ -30,7 +30,7 @@ pub struct Options {
     pub stats: bool,
     #[builder(default)]
     pub stats_csv: String,
-    #[builder(default = 1)]
+    #[builder(default)]
     pub threads: usize,
 }
 
@@ -55,7 +55,7 @@ fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
     return Ok(found)
 }
 
-pub fn get_csv_reader(file: PathBuf, options: &Options) -> Result<(csv::Reader<std::fs::File>, u8, u8), DescribeError>{
+pub fn get_csv_reader_builder(file: PathBuf, options: &Options) -> Result<(csv::ReaderBuilder, u8, u8), DescribeError>{
 
     let mut delimiter = options.delimiter.unwrap_or(b',');
     let quote = options.quote.unwrap_or(b'"');
@@ -70,7 +70,7 @@ pub fn get_csv_reader(file: PathBuf, options: &Options) -> Result<(csv::Reader<s
         .delimiter(delimiter)
         .quote(quote);
 
-    Ok((reader_builder.from_reader(std::fs::File::open(&file)?), delimiter, quote))
+    Ok((reader_builder, delimiter, quote))
 }
 
 
@@ -84,13 +84,19 @@ pub fn describe_file(file: PathBuf, mut output_dir: PathBuf, options: &Options) 
         output_dir.push(".");
     }
 
-    let (csv_reader, delimiter, quote) = get_csv_reader(file.clone(), options)?;
+    let (csv_reader_builder, delimiter, quote) = get_csv_reader_builder(file.clone(), options)?;
 
-    let mut describe_value = if options.threads > 1 {
-        //describe_parallel(csv_reader, options.stats, options.threads)
-        describe_parallel_rows(csv_reader, options.stats || !options.stats_csv.is_empty())
+    let describer_options = DescriberOptions::builder().
+        mergable_stats(options.threads > 0 && (options.stats || !options.stats_csv.is_empty())).
+        stats(options.stats || !options.stats_csv.is_empty()).build();
+    
+    println!("{options:?}");
+    println!("{describer_options:?}");
+
+    let mut describe_value = if options.threads > 0 {
+        describe_parallel(csv_reader_builder, file.clone(), describer_options, options.threads)?
     } else {
-        describe_csv(csv_reader, options.stats || !options.stats_csv.is_empty())
+        describe_csv(csv_reader_builder.from_path(file.clone())?, describer_options)?
     };
 
     let fields_value = describe_value["fields"].take();
@@ -138,7 +144,7 @@ pub fn describe_files(files: Vec<PathBuf>, output_dir: PathBuf, options: &Option
     });
 
     if !options.stats_csv.is_empty() {
-        datapackage_to_stats_csv(&datapackage, options.stats_csv.clone().into())?;
+        datapackage_to_stats_csv(&datapackage, options.stats_csv.clone().into(), options.threads > 0)?;
     }
 
     Ok(datapackage)
@@ -152,12 +158,24 @@ pub fn output_datapackage(files: Vec<PathBuf>, output_dir: PathBuf, options: &Op
     Ok(())
 }
 
-fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf) -> Result<(), DescribeError> {
+fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf, mergable_stats: bool) -> Result<(), DescribeError> {
     let resources_option = datapackage["resources"].as_array();
 
     let resources = resources_option.expect("we made the datapackage so key should be there");
-    let core_fields = ["table", "field", "type", "format"];
-    let stats_fields = [
+    let core_fields = vec!["table", "field", "type", "format"];
+    let stats_fields = if mergable_stats { vec![
+        "min_len",
+        "max_len",
+        "min_str",
+        "max_str",
+        "count",
+        "empty_count",
+        "estimate_unique",
+        "sum",
+        "mean",
+        "min_number",
+        "max_number"
+    ]} else { vec![
         "min_len",
         "max_len",
         "min_str",
@@ -176,9 +194,9 @@ fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf) -> Result<(), De
         "lower_quartile",
         "upper_quartile",
         "deciles"
-    ];
-    let mut all_fields = core_fields.to_vec();
-    all_fields.append(&mut stats_fields.to_vec());
+    ]};
+    let mut all_fields = core_fields;
+    all_fields.append(&mut stats_fields.clone());
 
     let mut writer = csv::Writer::from_path(path)?;
     writer.write_record(all_fields)?;
@@ -191,7 +209,7 @@ fn datapackage_to_stats_csv(datapackage: &Value, path: PathBuf) -> Result<(), De
                 row.push(field["name"].as_str().unwrap_or("").to_string());
                 row.push(field["type"].as_str().unwrap_or("").to_string());
                 row.push(field["format"].as_str().unwrap_or("").to_string());
-                for stat in stats_fields {
+                for stat in stats_fields.clone() {
                     let value = match field["stats"].get(stat).unwrap() {
                         Value::Null => {"".to_string()},
                         Value::String(a) => {a.to_owned()},
@@ -253,6 +271,34 @@ mod tests {
     }
 
     #[test]
+    fn write_datapackage_multi() {
+        let tmpdir = tempdir::TempDir::new("").unwrap();
+        let path = tmpdir.into_path();
+        let input_file = path.join("all_types.csv");
+        let options = Options::builder().threads(4).stats_csv(path.join("stats.csv").to_string_lossy().into()).build();
+
+        std::fs::copy("src/fixtures/all_types.csv", &input_file).unwrap();
+
+        output_datapackage(vec![input_file], path.clone(), &options).unwrap();
+        let reader = std::fs::File::open(path.join("datapackage.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_reader(reader).unwrap();
+        insta::assert_yaml_snapshot!(value);
+
+        let mut rows = vec![];
+
+        let mut csv_reader = csv::Reader::from_path(path.join("stats.csv")).unwrap();
+
+        rows.push(csv_reader.headers().unwrap().iter().map(|a| {a.to_string()}).collect());
+
+        for row in csv_reader.deserialize() {
+            let row: Vec<String> = row.unwrap();
+            rows.push(row);
+        }
+        insta::assert_yaml_snapshot!(rows);
+    }
+
+
+    #[test]
     fn test_tab() {
         let options = Options::builder().build();
         let describe = describe_files(vec!["fixtures/tab_delimited.csv".into()], "".into(), &options).unwrap();
@@ -266,24 +312,85 @@ mod tests {
         insta::assert_yaml_snapshot!(describe);
     }
 
-    // #[test]
-    // fn large_file_basic() {
-    //     let options = Options::builder().stats_csv("moo.csv".into()).build();
-    //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
-    //     insta::assert_yaml_snapshot!(describe);
-    // }
-    // #[test]
-    // fn large_file_basic() {
-    //     let options = Options::builder().stats(true).build();
-    //     println!("{options:?}");
-    //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
-    //     //insta::assert_yaml_snapshot!(describe);
-    // }
+    #[test]
+    fn basic_multi() {
+        let options = Options::builder().stats(true).threads(8).build();
+        let describe = describe_files(vec!["src/fixtures/all_types.csv".into()], "".into(), &options).unwrap();
+        insta::assert_yaml_snapshot!(describe);
+    }
+
+    #[test]
+    fn large_test_threading() {
+        let options = Options::builder().build();
+        let describe = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options).unwrap();
+
+        for i in 0..16 {
+            let options_multi = Options::builder().threads(i).build();
+            let describe_multi = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options_multi).unwrap();
+            assert_json_diff::assert_json_eq!(describe, describe_multi);
+        }
+        insta::assert_yaml_snapshot!(describe);
+    }
+
+    fn round_numbers(value: &mut Value) {
+        match value {
+            Value::Number(n) => {
+                // Convert the number to a f64 and round it
+                let rounded = n.as_f64().unwrap().round();
+    
+                // Convert the rounded f64 to a string and update the value
+                *value = Value::Number(serde_json::Number::from_f64(rounded).unwrap());
+            }
+            Value::Array(a) => {
+                // Recursively round the numbers in the array
+                for v in a {
+                    round_numbers(v);
+                }
+            }
+            Value::Object(o) => {
+                // Recursively round the numbers in the object
+                for (_, v) in o {
+                    round_numbers(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn large_test_threading_stats() {
+        let options = Options::builder().stats(true).threads(1).build();
+        let mut describe = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options).unwrap();
+        round_numbers(&mut describe);
+
+        for i in 2..16 {
+            let options_multi = Options::builder().stats(true).threads(i).build();
+            let mut describe_multi = describe_files(vec!["fixtures/large/csv/data.csv".into()], "".into(), &options_multi).unwrap();
+            round_numbers(&mut describe_multi);
+            assert_json_diff::assert_json_eq!(describe, describe_multi);
+        }
+        insta::assert_yaml_snapshot!(describe);
+    }
+
+    #[test]
+    fn small_test_threading_stats() {
+        let options = Options::builder().stats(true).threads(1).build();
+        let mut describe = describe_files(vec!["src/fixtures/all_types_six_rows.csv".into()], "".into(), &options).unwrap();
+        round_numbers(&mut describe);
+
+        for i in 2..100 {
+            let options_multi = Options::builder().stats(true).threads(i).build();
+            let mut describe_multi = describe_files(vec!["src/fixtures/all_types_six_rows.csv".into()], "".into(), &options_multi).unwrap();
+            round_numbers(&mut describe_multi);
+            assert_json_diff::assert_json_eq!(describe, describe_multi);
+        }
+        insta::assert_yaml_snapshot!(describe);
+    }
 
     // #[test]
     // fn large_file_basic_multi() {
-    //     let options = Options::builder().stats(true).threads(2).build();
-    //     let describe = describe_files(vec!["rows_small.csv".into()], "".into(), &options).unwrap();
+    //     let options = Options::builder().threads(16).stats(true).build();
+    //     let describe = describe_files(vec!["../flatterer_data/rows.csv".into()], "".into(), &options).unwrap();
     //     //insta::assert_yaml_snapshot!(describe);
     // }
 

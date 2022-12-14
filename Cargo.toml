@@ -37,9 +37,12 @@ pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits
 streaming-stats = "0.2.3"
 counter = "0.5.7"
 crossbeam-channel = "0.5.6"
+csv-index = "0.1.6"
+threadpool = "1.8.1"
 
 [profile.bench]
 debug = true
 
 [dev-dependencies]
+assert-json-diff = "2.0.2"
 insta = { version = "1.17.1", features = ["redactions"] }

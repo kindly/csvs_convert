@@ -24,6 +24,7 @@ mod describe_csv;
 mod describer;
 
 pub use describe::{Options as DescribeOptions, DescribeError, describe_files, output_datapackage};
+pub use describer::{Options as DescriberOptions, Describer};
 use csv::ReaderBuilder;
 use csv::Writer;
 use minijinja::Environment;
@@ -147,6 +148,8 @@ pub struct Options {
     pub datapackage_string: bool,
     #[builder(default)]
     pub stats_csv: String,
+    #[builder(default)]
+    pub threads: usize,
 }
 
 lazy_static::lazy_static! {
@@ -866,8 +869,7 @@ pub fn csvs_to_sqlite(db_path: String, csvs: Vec<PathBuf>) -> Result<Value, Erro
 }
 
 pub fn csvs_to_sqlite_with_options(db_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
-
+    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
 
@@ -1131,7 +1133,7 @@ pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value,
 }
 
 pub fn csvs_to_parquet_with_options(output_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
+    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
     datapackage_to_parquet_with_options(PathBuf::from(output_path), serde_json::to_string(&datapackage).expect("should serialize"), options)?;
@@ -1343,7 +1345,7 @@ pub fn csvs_to_xlsx(xlsx_path: String, csvs: Vec<PathBuf>) -> Result<Value, Erro
 }
 
 pub fn csvs_to_xlsx_with_options(xlsx_path: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
+    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
     datapackage_to_xlsx_with_options(xlsx_path, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
@@ -1420,7 +1422,7 @@ pub fn csvs_to_postgres(postgres_url: String, csvs: Vec<PathBuf>) -> Result<Valu
 }
 
 pub fn csvs_to_postgres_with_options(postgres_url: String, csvs: Vec<PathBuf>, mut options: Options) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder().stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
+    let describe_options = describe::Options::builder().threads(options.threads).stats(options.stats).stats_csv(options.stats_csv.clone()).delimiter(options.delimiter).quote(options.quote).build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options).context(DescribeSnafu {})?;
     options.datapackage_string = true;
     datapackage_to_postgres_with_options(postgres_url, serde_json::to_string(&datapackage).expect("should serialize"), options)?;
@@ -1624,6 +1626,7 @@ fn get_column_changes(resource: &Value, existing_columns: HashMap<String, String
 mod tests {
     use super::*;
     
+    use insta::assert_yaml_snapshot;
     use parquet::file::reader::SerializedFileReader;
     use rusqlite::types::ValueRef;
     use std::io::BufRead;
@@ -1793,12 +1796,13 @@ mod tests {
         let tmp = tmp_dir.path().to_owned();
         //let tmp = PathBuf::from("/tmp");
 
-        csvs_to_sqlite(
+        let datapackage = csvs_to_sqlite_with_options(
             tmp.join("sqlite.db").to_string_lossy().into(),
             vec![
                 "fixtures/add_resource/csv/games.csv".into(),
                 "fixtures/add_resource/csv/games2.csv".into(),
             ],
+            Options::builder().stats(true).build()
         )
         .unwrap();
 
@@ -1815,6 +1819,7 @@ mod tests {
             }
             insta::assert_yaml_snapshot!(output)
         }
+        insta::assert_yaml_snapshot!(datapackage)
     }
 
     #[test]
@@ -1822,9 +1827,10 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
 
-        csvs_to_sqlite(
+        csvs_to_sqlite_with_options(
             tmp.join("sqlite.db").to_string_lossy().into(),
             vec!["src/fixtures/all_types.csv".into(), "src/fixtures/all_types_semi_colon.csv".into()],
+            Options::builder().stats(true).build()
         )
         .unwrap();
 
@@ -1836,9 +1842,9 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
 
-        let options = Options::builder().delimiter(Some(b','));
+        let options = Options::builder().stats(true).threads(8).delimiter(Some(b','));
 
-        csvs_to_sqlite_with_options(
+        let datapackage = csvs_to_sqlite_with_options(
             tmp.join("sqlite.db").to_string_lossy().into(),
             vec![
                 "fixtures/large/csv/data.csv".into(),
@@ -1850,6 +1856,7 @@ mod tests {
         .unwrap();
 
         assert!(tmp.join("sqlite.db").exists());
+        assert_yaml_snapshot!(datapackage);
     }
 
     #[test]

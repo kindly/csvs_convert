@@ -1,10 +1,11 @@
 use crate::describe::Describer;
+use crate::describer::Options;
 use csv::Reader;
 use serde_json::{json, Value};
-use crossbeam_channel::bounded;
-use std::thread::spawn;
+use crossbeam_channel::unbounded;
+use std::path::PathBuf;
 
-pub fn describe(mut reader: Reader<std::fs::File>, with_stats:bool) -> Result<Value, csv::Error> {
+pub fn describe(mut reader: Reader<std::fs::File>, options: Options) -> Result<Value, csv::Error> {
     //let mut reader = csv::Reader::from_path(path).unwrap();
 
     let mut headers = vec![];
@@ -12,8 +13,7 @@ pub fn describe(mut reader: Reader<std::fs::File>, with_stats:bool) -> Result<Va
     {
         for header in reader.headers()? {
             headers.push(header.to_owned());
-            let mut describer = Describer::new();
-            describer.calculate_stats = with_stats;
+            let describer = Describer::new_with_options(options.clone());
             describers.push(describer)
         }
     }
@@ -37,7 +37,7 @@ pub fn describe(mut reader: Reader<std::fs::File>, with_stats:bool) -> Result<Va
             "format": describer.guess_type().1,
         });
 
-        if with_stats {
+        if options.stats || options.mergable_stats {
             field.as_object_mut().expect("We know its an object").insert("stats".into(), describer.stats());
         }
         fields.push(field);
@@ -50,160 +50,123 @@ pub fn describe(mut reader: Reader<std::fs::File>, with_stats:bool) -> Result<Va
 //    channel: crossbeam_channel::Sender<(usize, String)>,
 //} 
 
-struct Receiver {
-    cols: Vec<usize>,
-    headers: Vec<String>,
-    channel: crossbeam_channel::Receiver<(usize, String)>,
-    describers: Vec<Describer>
-} 
+pub fn describe_parallel(reader_builder: csv::ReaderBuilder, file: PathBuf, options: Options, num_threads: usize) -> Result<Value, csv::Error> {
 
-pub fn describe_parallel(mut reader: Reader<std::fs::File>, with_stats:bool, num_threads: usize) -> Value{
-    //let mut reader = csv::Reader::from_path(path).unwrap();
-    let mut senders = vec![];
-    let mut receivers = vec![];
-
-    for _ in 0_usize..num_threads {
-        let (sender, receiver) = bounded(1000);
-        senders.push(sender);
-        receivers.push(Receiver {cols: vec![], headers: vec![], channel: receiver, describers: vec![]})
-    }
+    let mut wtr = std::io::Cursor::new(vec![]);
 
     {
-        for (col, header) in reader.headers().unwrap().iter().enumerate() {
-            let mut describer = Describer::new();
-            describer.calculate_stats = with_stats;
-            receivers[col % num_threads].describers.push(describer);
-            receivers[col % num_threads].headers.push(header.to_owned());
-            receivers[col % num_threads].cols.push(col);
-        }
+        csv_index::RandomAccessSimple::create(&mut reader_builder.from_path(file.clone())?, &mut wtr)?;
     }
 
-    let mut threads = vec![];
+    let mut idx = csv_index::RandomAccessSimple::open(wtr)?;
 
-    for mut receiver in receivers {
-        let thread = spawn(move || {
-            for (i, item) in receiver.channel {
-                receiver.describers[i].process(&item)
-            }
-            let mut fields = vec![];
-            for (num, col) in receiver.cols.iter().enumerate() {
-                let mut field = json!({
-                    "name": receiver.headers[num],
-                    "type": receiver.describers[num].guess_type().0,
-                    "format": receiver.describers[num].guess_type().1,
-                });
+    let pool = threadpool::ThreadPool::new(num_threads);
 
-                if with_stats {
-                    field.as_object_mut().unwrap().insert("stats".into(), receiver.describers[num].stats());
-                }
-                fields.push((*col, field))
-            }
-            fields
-        });
-        threads.push(thread);
-    } 
-
-
-    let mut row_count: usize = 0;
-
-    for row in reader.records() {
-        let record = row.unwrap();
-
-        for (index, cell) in record.into_iter().enumerate() {
-            senders[index % num_threads].send((index.div_euclid(num_threads), cell.to_owned())).expect("should send");
-        }
-        row_count += 1;
-    }
-    senders.clear();
-
-    let mut fields = vec![];
-    for thread in threads {
-        let field = thread.join().expect("should join");
-        fields.extend(field);
-    }
-    fields.sort_by_key(|(a, _)| {*a});
-    let fields: Vec<Value> = fields.into_iter().map(|i| {i.1}).collect();
-
-    json!({"row_count": row_count, "fields": fields})
-}
-
-
-pub fn describe_parallel_rows(mut reader: Reader<std::fs::File>, with_stats:bool) -> Value{
+    let mut reader = reader_builder.from_path(file.clone())?;
 
     let mut headers = vec![];
     {
-        for header in reader.headers().unwrap() {
+        for header in reader.headers()? {
             headers.push(header.to_owned());
         }
     }
 
-    let (send, receive) = bounded(1000);
+    let (send, receive) = unbounded();
 
-    let thread = spawn(move|| {
-        for row in reader.records() {
-            let record = row.unwrap();
-            send.send(record).unwrap();
+    let chunk_size = std::cmp::max((idx.len() as usize) / num_threads, 1);
+    let mut current_index = 1;
+
+    loop {
+        if idx.len() <= current_index   {
+            break;
         }
-    });
+        let headers_clone = headers.clone();
+        let send_clone = send.clone();
+        let options_clone = options.clone();
+        let pos = idx.get(current_index)?;
+        let mut reader = reader_builder.from_path(file.clone())?;
+        reader.seek(pos).unwrap();
+        
 
-    let mut describers = vec![];
-    for _ in headers.iter() {
-        let mut describer = Describer::new();
-        describer.calculate_stats = with_stats;
-        describers.push(describer)
+        pool.execute(move || {
+            let mut describers = vec![];
+            for _ in headers_clone.iter() {
+                let describer = Describer::new_with_options(options_clone.clone());
+                describers.push(describer)
+            }
+
+            for row in reader.records().into_iter().take(chunk_size) {
+                let record = match row {
+                    Ok(record) => record,
+                    Err(error) => {send_clone.send(Err(error)).expect("channel sending should work"); panic!()}
+                };
+                for (index, cell) in record.iter().enumerate() {
+                    describers[index].process(cell);
+                }
+            }
+            send_clone.send(Ok(describers)).expect("channel should be there");
+        });
+
+        current_index += chunk_size as u64;
     }
+    pool.join();
+    drop(send);
 
-    let mut row_count: usize = 0;
-    for record in receive {
-        for (index, cell) in record.iter().enumerate() {
-            describers[index].process(cell);
+    let mut all_describers = vec![];
+
+    for describers in receive {
+        let describers = describers?;
+        if all_describers.is_empty() {
+            for describer in describers.into_iter() {
+                all_describers.push(describer)
+            }
+            continue
         }
-        row_count += 1;
-    }
 
-    thread.join().unwrap();
+        for (num, describer) in describers.into_iter().enumerate() {
+            all_describers[num].merge(describer)
+        }
+    }
 
     let mut fields = vec![];
-    for (num, mut describer) in describers.into_iter().enumerate() {
-
+    for (num, mut describer) in all_describers.into_iter().enumerate() {
         let mut field = json!({
             "name": headers[num],
             "type": describer.guess_type().0,
             "format": describer.guess_type().1,
         });
 
-        if with_stats {
-            field.as_object_mut().unwrap().insert("stats".into(), describer.stats());
+        if options.stats || options.mergable_stats {
+            field.as_object_mut().expect("just main field above").insert("stats".into(), describer.stats());
         }
         fields.push(field);
     }
-
-    json!({"row_count": row_count, "fields": fields})
-
+    
+    return Ok(json!({"row_count": idx.len() - 1,"fields": fields}))
 }
 
 
 #[cfg(test)]
 mod tests {
-    use crate::describe_csv::{describe, describe_parallel};
+    use crate::describe_csv::{describe, describe_parallel, Options};
 
     #[test]
     fn all_types() {
         let reader = csv::Reader::from_path("src/fixtures/all_types.csv").unwrap();
-        let metadata = describe(reader, false);
+        let metadata = describe(reader, Options::builder().build());
 
         insta::assert_yaml_snapshot!(metadata.unwrap());
     }
 
     #[test]
     fn large_multi() {
-        let reader = csv::Reader::from_path("fixtures/large/csv/data.csv").unwrap();
-        let metadata = describe_parallel(reader, true, 2);
+        let reader_builder = csv::ReaderBuilder::new();
+        let metadata_multi = describe_parallel(reader_builder, "fixtures/large/csv/data.csv".into(), Options::builder().build(), 8).unwrap();
 
         let reader = csv::Reader::from_path("fixtures/large/csv/data.csv").unwrap();
-        let metadata_multi = describe(reader, true);
+        let metadata = describe(reader, Options::builder().build()).unwrap();
 
-        assert_eq!(metadata, metadata_multi);
+        assert_eq!(metadata.clone(), metadata_multi);
 
         insta::assert_yaml_snapshot!(metadata);
     }
