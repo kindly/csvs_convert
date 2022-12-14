@@ -93,9 +93,6 @@ pub fn describe_file(
         .stats(options.stats || !options.stats_csv.is_empty())
         .build();
 
-    println!("{options:?}");
-    println!("{describer_options:?}");
-
     let mut describe_value = if options.threads > 0 {
         describe_parallel(
             csv_reader_builder,
