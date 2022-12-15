@@ -25,7 +25,7 @@ mod zip_dir;
 
 use csv::ReaderBuilder;
 use csv::Writer;
-pub use describe::{describe_files, output_datapackage, DescribeError, Options as DescribeOptions};
+pub use describe::{describe_files, output_datapackage, make_datapackage, DescribeError, Options as DescribeOptions};
 pub use describer::{Describer, Options as DescriberOptions};
 use minijinja::Environment;
 use postgres::{Client, NoTls};
@@ -1806,7 +1806,6 @@ fn get_column_changes(
 mod tests {
     use super::*;
 
-    use insta::assert_yaml_snapshot;
     use parquet::file::reader::SerializedFileReader;
     use rusqlite::types::ValueRef;
     use std::io::BufRead;
@@ -2030,7 +2029,7 @@ mod tests {
             .threads(8)
             .delimiter(Some(b','));
 
-        let datapackage = csvs_to_sqlite_with_options(
+        csvs_to_sqlite_with_options(
             tmp.join("sqlite.db").to_string_lossy().into(),
             vec![
                 "fixtures/large/csv/data.csv".into(),

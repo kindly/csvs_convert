@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -13,23 +13,23 @@ homepage = "https://github.com/kindly/csvs_convert"
 
 [dependencies]
 
-chrono = "0.4.19"
-parquet = { version = "19.0.0", default-features = false, features = ["arrow", "snap", "brotli", "flate2", "lz4", "base64"] }
-arrow = "19.0.0"
+chrono = { version = "0.4.19", default-features = false }
+parquet = { version = "19.0.0", default-features = false, features = ["arrow", "snap"] }
+arrow = { version = "19.0.0", default-features = false, features = ["csv"] }
 serde_json = { version = "1.0.83", features = ["preserve_order"] }
 csv = "1.1.6"
 snafu = "0.7.1"
-zip = "0.6.2"
+zip = { version = "0.6.2", default-features = false, features = ["deflate"] }
 tempfile = "3.3.0"
 walkdir = "2.3.2"
 pathdiff = "0.2.1"
-petgraph = "0.6.2"
+petgraph = { version = "0.6.2", default-features = false, features= ["graphmap"] }
 rusqlite = { version = "0.28.0", features = ["bundled"] }
-minijinja = "0.26.0"
+minijinja = { version = "0.26.0" }
 typed-builder = "0.10.0"
 xlsxwriter = "0.3.5"
 lazy_static = "1.4.0"
-regex = "1.6.0"
+regex = {version = "1.6.0", default-features = false}
 postgres = "0.19.3"
 tempdir = "0.3.7"
 thiserror = "1.0.35"

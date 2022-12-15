@@ -172,12 +172,23 @@ pub fn output_datapackage(
     files: Vec<PathBuf>,
     output_dir: PathBuf,
     options: &Options,
-) -> Result<(), DescribeError> {
-    let datapackage = describe_files(files, output_dir.clone(), options)?;
+) -> Result<Value, DescribeError> {
+    let datapackage = make_datapackage(files, output_dir.clone(), options)?;
     let file = std::fs::File::create(output_dir.join("datapackage.json"))?;
     serde_json::to_writer_pretty(file, &datapackage)?;
-    Ok(())
+    Ok(datapackage)
 }
+
+
+pub fn make_datapackage(
+    files: Vec<PathBuf>,
+    path: PathBuf,
+    options: &Options,
+) -> Result<Value, DescribeError> {
+    let datapackage = describe_files(files, path, options)?;
+    Ok(datapackage)
+}
+
 
 fn datapackage_to_stats_csv(
     datapackage: &Value,
