@@ -4,13 +4,13 @@ expression: describer.stats()
 ---
 Object {
     "min_len": Number(1),
-    "max_len": Number(101),
-    "min_str": String("a"),
-    "max_str": String("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    "count": Number(2),
+    "max_len": Number(4),
+    "min_str": String("1"),
+    "max_str": String("a"),
+    "count": Number(1002),
     "empty_count": Number(0),
     "exact_unique": Null,
-    "estimate_unique": Number(2),
+    "estimate_unique": Number(999),
     "top_20": Null,
     "sum": Null,
     "mean": Null,

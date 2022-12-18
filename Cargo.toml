@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.7.4"
+version = "0.7.5"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -13,26 +13,25 @@ homepage = "https://github.com/kindly/csvs_convert"
 
 [dependencies]
 
-chrono = { version = "0.4.19", default-features = false }
-parquet = { version = "19.0.0", default-features = false, features = ["arrow", "snap"] }
-arrow = { version = "19.0.0", default-features = false, features = ["csv"] }
-serde_json = { version = "1.0.83", features = ["preserve_order"] }
+chrono = { version = "0.4.23", default-features = false }
+parquet = { version = "29.0.0", default-features = false, features = ["arrow", "snap"] }
+arrow = { version = "29.0.0", default-features = false, features = ["csv"] }
+serde_json = { version = "1.0.91", features = ["preserve_order"] }
 csv = "1.1.6"
-snafu = "0.7.1"
-zip = { version = "0.6.2", default-features = false, features = ["deflate"] }
+snafu = "0.7.3"
+zip = { version = "0.6.3", default-features = false, features = ["deflate"] }
 tempfile = "3.3.0"
 walkdir = "2.3.2"
 pathdiff = "0.2.1"
 petgraph = { version = "0.6.2", default-features = false, features= ["graphmap"] }
 rusqlite = { version = "0.28.0", features = ["bundled"] }
-minijinja = { version = "0.26.0" }
-typed-builder = "0.10.0"
-xlsxwriter = "0.3.5"
+minijinja = { version = "0.27.0" }
+typed-builder = "0.11.0"
+xlsxwriter = "0.5.0"
 lazy_static = "1.4.0"
-regex = {version = "1.6.0", default-features = false}
-postgres = "0.19.3"
-tempdir = "0.3.7"
-thiserror = "1.0.35"
+regex = {version = "1.7.0", default-features = false}
+postgres = "0.19.4"
+thiserror = "1.0.38"
 pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits", "fixedbitset"], default-features = false }
 streaming-stats = "0.2.3"
 counter = "0.5.7"
@@ -45,4 +44,4 @@ debug = true
 
 [dev-dependencies]
 assert-json-diff = "2.0.2"
-insta = { version = "1.17.1", features = ["redactions"] }
+insta = { version = "1.23.0", features = ["redactions", "yaml"] }

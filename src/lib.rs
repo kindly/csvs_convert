@@ -1492,7 +1492,7 @@ pub fn datapackage_to_xlsx_with_options(
     pathbuf.pop();
 
     let mut workbook =
-        Workbook::new_with_options(&xlsx_path, true, Some(&pathbuf.to_string_lossy()), false);
+        Workbook::new_with_options(&xlsx_path, true, Some(&pathbuf.to_string_lossy()), false).context(XLSXSnafu {})?;
 
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
@@ -1743,6 +1743,7 @@ pub fn datapackage_to_postgres_with_options(
                 std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {
                     filename: resource_path,
                 })?;
+                writer.finish().context(PostgresSnafu {})?;
             }
             Readers::File(csv_file) => {
                 let (filename, mut file) = csv_file;
@@ -1751,7 +1752,7 @@ pub fn datapackage_to_postgres_with_options(
                     filename: resource_path,
                 })?;
                 file.flush().unwrap();
-                writer.finish().unwrap();
+                writer.finish().context(PostgresSnafu {})?;
 
                 if options.delete_input_csv {
                     std::fs::remove_file(&filename).context(IoSnafu {

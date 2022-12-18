@@ -342,6 +342,36 @@ impl Describer {
         }
     }
 
+    fn num_stats(&mut self, number: f64) {
+        if self.options.stats && !number.is_nan() {
+            if !self.options.mergable_stats {
+                self.tdigest.insert(number);
+            }
+            self.stats.add(number);
+            if self.max_number.is_none() {
+                self.max_number = Some(number);
+                self.min_number = Some(number);
+            }
+            self.max_number =
+                Some(number.max(self.max_number.expect("number already checked")));
+            self.min_number =
+                Some(number.min(self.min_number.expect("number already checked")));
+            self.sum += number;
+        }
+    }
+
+    pub fn process_num(&mut self, number: f64) {
+        if !self.descriptions.contains(&("integer", "integer")) || !self.descriptions.contains(&("number", "number")) {
+            self.process(&number.to_string());
+            return
+        }
+        self.descriptions.clear();
+        self.descriptions.push(("number", "number"));
+
+        self.count += 1;
+        self.num_stats(number);
+    }
+
     pub fn process(&mut self, string: &str) {
         if string.is_empty() {
             self.empty_count += 1;
@@ -392,21 +422,7 @@ impl Describer {
 
             if type_name == "number" {
                 if let Some(number) = self.check_number(string) {
-                    if self.options.stats && !number.is_nan() {
-                        if !self.options.mergable_stats {
-                            self.tdigest.insert(number);
-                        }
-                        self.stats.add(number);
-                        if self.max_number.is_none() {
-                            self.max_number = Some(number);
-                            self.min_number = Some(number);
-                        }
-                        self.max_number =
-                            Some(number.max(self.max_number.expect("number already checked")));
-                        self.min_number =
-                            Some(number.min(self.min_number.expect("number already checked")));
-                        self.sum += number;
-                    }
+                    self.num_stats(number);
                 } else {
                     self.to_delete.push(num);
                     self.tdigest.clear();
@@ -709,6 +725,21 @@ mod tests {
 
         for num in 0..1001 {
             describer.process(&num.to_string())
+        }
+
+        insta::assert_debug_snapshot!(describer.stats());
+
+        describer.process("a");
+
+        insta::assert_debug_snapshot!(describer.stats());
+    }
+
+    #[test]
+    fn stats_process_number() {
+        let mut describer = Describer::new_with_options(Options::builder().stats(true).build());
+
+        for num in 0..1001 {
+            describer.process_num(num.to_f64().unwrap())
         }
 
         insta::assert_debug_snapshot!(describer.stats());

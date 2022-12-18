@@ -17,8 +17,8 @@ resources:
             max_len: 3
             min_str: "122"
             max_str: foo
-            min_number: 122.0
-            max_number: 122.0
+            min_number: 122
+            max_number: 122
             count: 2
             empty_count: 0
             estimate_unique: 2
@@ -137,13 +137,13 @@ resources:
             max_len: 2
             min_str: "23"
             max_str: "23"
-            min_number: 23.0
-            max_number: 23.0
+            min_number: 23
+            max_number: 23
             count: 2
             empty_count: 0
             estimate_unique: 1
-            sum: 46.0
-            mean: 23.0
+            sum: 46
+            mean: 23
     path: all_types.csv
     dialect:
       delimiter: ","

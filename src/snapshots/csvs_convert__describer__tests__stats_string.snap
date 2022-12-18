@@ -2,55 +2,29 @@
 source: src/describer.rs
 expression: describer.stats()
 ---
-Object({
-    "min_len": Number(
-        1,
-    ),
-    "max_len": Number(
-        1,
-    ),
-    "min_str": String(
-        "a",
-    ),
-    "max_str": String(
-        "c",
-    ),
-    "count": Number(
-        4,
-    ),
-    "empty_count": Number(
-        0,
-    ),
-    "exact_unique": Number(
-        3,
-    ),
+Object {
+    "min_len": Number(1),
+    "max_len": Number(1),
+    "min_str": String("a"),
+    "max_str": String("c"),
+    "count": Number(4),
+    "empty_count": Number(0),
+    "exact_unique": Number(3),
     "estimate_unique": Null,
-    "top_20": Array([
-        Array([
-            String(
-                "c",
-            ),
-            Number(
-                2,
-            ),
-        ]),
-        Array([
-            String(
-                "a",
-            ),
-            Number(
-                1,
-            ),
-        ]),
-        Array([
-            String(
-                "b",
-            ),
-            Number(
-                1,
-            ),
-        ]),
-    ]),
+    "top_20": Array [
+        Array [
+            String("c"),
+            Number(2),
+        ],
+        Array [
+            String("a"),
+            Number(1),
+        ],
+        Array [
+            String("b"),
+            Number(1),
+        ],
+    ],
     "sum": Null,
     "mean": Null,
     "variance": Null,
@@ -62,4 +36,4 @@ Object({
     "upper_quartile": Null,
     "deciles": Null,
     "centiles": Null,
-})
+}
