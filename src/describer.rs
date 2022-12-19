@@ -477,7 +477,7 @@ impl Describer {
 
     fn check_boolean(&mut self, string: &str) -> bool {
         if [
-            "1", "0", "true", "false", "t", "f", "True", "False", "TRUE", "FALSE",
+            "true", "false", "t", "f", "True", "False", "TRUE", "FALSE",
         ]
         .contains(&string)
         {
