@@ -429,6 +429,13 @@ impl Describer {
                 }
             }
 
+            if ["datetime", "datetime_tz", "date", "time"].contains(&type_name) {
+                if !string.is_ascii() {
+                    self.to_delete.push(num);
+                    continue
+                }
+            }
+
             if type_name == "datetime" && !self.check_datetime(string, type_description) {
                 self.to_delete.push(num)
             }

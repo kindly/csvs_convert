@@ -1148,7 +1148,6 @@ fn create_parquet(
         let field = match field_type {
             "number" => Field::new(name, DataType::Float64, true),
             "integer" => Field::new(name, DataType::Int64, true),
-            "boolean" => Field::new(name, DataType::Boolean, true),
             _ => Field::new(name, DataType::Utf8, true),
         };
         arrow_fields.push(field);
