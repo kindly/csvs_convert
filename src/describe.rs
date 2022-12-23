@@ -179,7 +179,6 @@ pub fn output_datapackage(
     Ok(datapackage)
 }
 
-
 pub fn make_datapackage(
     files: Vec<PathBuf>,
     path: PathBuf,
@@ -188,7 +187,6 @@ pub fn make_datapackage(
     let datapackage = describe_files(files, path, options)?;
     Ok(datapackage)
 }
-
 
 fn datapackage_to_stats_csv(
     datapackage: &Value,

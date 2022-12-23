@@ -352,18 +352,18 @@ impl Describer {
                 self.max_number = Some(number);
                 self.min_number = Some(number);
             }
-            self.max_number =
-                Some(number.max(self.max_number.expect("number already checked")));
-            self.min_number =
-                Some(number.min(self.min_number.expect("number already checked")));
+            self.max_number = Some(number.max(self.max_number.expect("number already checked")));
+            self.min_number = Some(number.min(self.min_number.expect("number already checked")));
             self.sum += number;
         }
     }
 
     pub fn process_num(&mut self, number: f64) {
-        if !self.descriptions.contains(&("integer", "integer")) || !self.descriptions.contains(&("number", "number")) {
+        if !self.descriptions.contains(&("integer", "integer"))
+            || !self.descriptions.contains(&("number", "number"))
+        {
             self.process(&number.to_string());
-            return
+            return;
         }
         self.descriptions.clear();
         self.descriptions.push(("number", "number"));
@@ -432,7 +432,7 @@ impl Describer {
             if ["datetime", "datetime_tz", "date", "time"].contains(&type_name) {
                 if !string.is_ascii() {
                     self.to_delete.push(num);
-                    continue
+                    continue;
                 }
             }
 
@@ -476,11 +476,7 @@ impl Describer {
     }
 
     fn check_boolean(&mut self, string: &str) -> bool {
-        if [
-            "true", "false", "t", "f", "True", "False", "TRUE", "FALSE",
-        ]
-        .contains(&string)
-        {
+        if ["true", "false", "t", "f", "True", "False", "TRUE", "FALSE"].contains(&string) {
             return true;
         }
         false
@@ -541,8 +537,6 @@ mod tests {
     #[test]
     fn guess_bool() {
         let mut describer = Describer::new();
-        describer.process("1");
-        assert!(describer.guess_type().0 == "boolean");
         describer.process("true");
         assert!(describer.guess_type().0 == "boolean");
         describer.process("truee");
@@ -551,8 +545,6 @@ mod tests {
     #[test]
     fn guess_int() {
         let mut describer = Describer::new();
-        describer.process("1");
-        assert!(describer.guess_type().0 == "boolean");
         describer.process("2");
         assert!(describer.guess_type().0 == "integer");
         describer.process("12132323");
