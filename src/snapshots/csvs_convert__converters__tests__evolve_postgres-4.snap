@@ -1,0 +1,13 @@
+---
+source: src/lib.rs
+expression: name_type
+---
+- string-text
+- date-timestamp
+- number-numeric
+- boolean-text
+- string2-text
+- date2-text
+- number2-text
+- boolean2-text
+

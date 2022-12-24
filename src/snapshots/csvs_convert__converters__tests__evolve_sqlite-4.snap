@@ -1,0 +1,37 @@
+---
+source: src/lib.rs
+expression: output
+---
+- - a string
+  - 2005-02-01
+  - "42"
+  - "true"
+  - "Null"
+  - "Null"
+  - "Null"
+  - "Null"
+- - a string
+  - 2005-02-01
+  - "42"
+  - "true"
+  - "Null"
+  - "Null"
+  - "Null"
+  - "Null"
+- - an string
+  - "Null"
+  - "Null"
+  - "Null"
+  - string2
+  - 2005-02-01
+  - "42"
+  - "false"
+- - an string
+  - "Null"
+  - "Null"
+  - "true"
+  - string2
+  - 2005-02-01
+  - moo
+  - "false"
+

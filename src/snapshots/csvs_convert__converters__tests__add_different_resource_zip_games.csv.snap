@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+assertion_line: 310
+expression: lines
+---
+- "id,title"
+- "1,game1_base"
+- "2,game2_base"
+

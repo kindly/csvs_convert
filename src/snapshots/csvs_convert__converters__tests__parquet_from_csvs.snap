@@ -1,0 +1,13 @@
+---
+source: src/lib.rs
+expression: data
+---
+- - id
+  - "1"
+- - title
+  - game1_add_resource
+- - id
+  - "2"
+- - title
+  - game2_add_resource
+
