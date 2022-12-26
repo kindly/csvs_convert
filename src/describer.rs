@@ -468,10 +468,16 @@ impl Describer {
     }
 
     fn check_integer(&mut self, string: &str) -> bool {
+        if string.len() > 1 && string.starts_with("0") {
+            return false
+        }
         string.parse::<i128>().is_ok()
     }
 
     fn check_number(&mut self, string: &str) -> Option<f64> {
+        if string.len() > 1 && string.starts_with("0") && !string.starts_with("0.") {
+            return None
+        }
         string.parse().ok()
     }
 
@@ -556,6 +562,15 @@ mod tests {
     }
 
     #[test]
+    fn guess_int_zero() {
+        let mut describer = Describer::new();
+        describer.process("2");
+        assert!(describer.guess_type().0 == "integer");
+        describer.process("001");
+        assert_eq!(describer.guess_type().0, "string");
+    }
+
+    #[test]
     fn guess_number() {
         let mut describer = Describer::new();
         describer.process("1.2");
@@ -572,6 +587,28 @@ mod tests {
         assert_eq!(describer.guess_type().0, "number");
         describer.process("1.3232a4");
         assert_eq!(describer.guess_type().0, "string");
+    }
+
+    #[test]
+    fn guess_number_zero_start() {
+        let mut describer = Describer::new();
+        describer.process("1.2");
+        assert!(describer.guess_type().0 == "number");
+        describer.process("0");
+        assert!(describer.guess_type().0 == "number");
+        describer.process("0.1");
+        assert!(describer.guess_type().0 == "number");
+        describer.process("01.1");
+        assert!(describer.guess_type().0 == "string");
+    }
+
+    #[test]
+    fn guess_number_double_zero_start() {
+        let mut describer = Describer::new();
+        describer.process("1.2");
+        assert!(describer.guess_type().0 == "number");
+        describer.process("00.1");
+        assert!(describer.guess_type().0 == "string");
     }
 
     #[test]
