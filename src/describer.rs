@@ -43,9 +43,10 @@ fn descriptions() -> Vec<(&'static str, &'static str)> {
 
 fn datetime_formats() -> Vec<&'static str> {
     vec![
-        "%Y-%m-%d %H:%M:%S",
+        //"%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
-        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%d %I:%M:%S %P",
         "%Y-%m-%d %I:%M %P",
         "%Y %b %d %H:%M:%S",
@@ -90,9 +91,10 @@ fn datetime_formats() -> Vec<&'static str> {
 
 fn datetime_tz_formats() -> Vec<&'static str> {
     vec![
-        "%Y-%m-%d %H:%M:%S%#z",
-        "%Y-%m-%d %H:%M:%S.%f%#z",
+        //"%Y-%m-%d %H:%M:%S%#z",
         "%Y-%m-%d %H:%M%#z",
+        "%Y-%m-%d %H:%M:%S%.f%:z",
+        "%Y-%m-%d %H:%M:%S%.fZ",
         "%Y-%m-%d %H:%M:%S %Z",
         "%Y-%m-%d %H:%M:%S.%f %Z",
         "%B %d %Y %H:%M:%S %Z",

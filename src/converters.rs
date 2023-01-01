@@ -18,7 +18,7 @@ use typed_builder::TypedBuilder;
 use xlsxwriter::Workbook;
 
 use arrow::csv::Reader;
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::error::ArrowError;
 use parquet::{
     arrow::ArrowWriter, basic::Compression, errors::ParquetError,
@@ -619,14 +619,14 @@ fn to_db_type(type_: String, format: String) -> String {
     match type_.as_str() {
         "string" => "TEXT".to_string(),
         "date" => {
-            if ALLOWED_DATE_FORMATS.contains(&format.as_str()) || format.is_empty() {
+            if POSTGRES_ALLOWED_DATE_FORMATS.contains(&format.as_str()) || format.is_empty() {
                 "TIMESTAMP".to_string()
             } else {
                 "TEXT".into()
             }
         }
         "datetime" => {
-            if ALLOWED_DATE_FORMATS.contains(&format.as_str()) || format.is_empty() {
+            if POSTGRES_ALLOWED_DATE_FORMATS.contains(&format.as_str()) || format.is_empty() {
                 "TIMESTAMP".to_string()
             } else {
                 "TEXT".into()
@@ -744,7 +744,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
 }
 
 lazy_static::lazy_static! {
-    pub static ref ALLOWED_DATE_FORMATS: Vec<&'static str> =
+    pub static ref POSTGRES_ALLOWED_DATE_FORMATS: Vec<&'static str> =
     vec!(
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
@@ -800,6 +800,16 @@ lazy_static::lazy_static! {
         "%m.%d.%Y",
         "%Y.%m.%d",
         "%y%m%d %H:%M:%S");
+
+    pub static ref PARQUET_ALLOWED_DATE_FORMATS: Vec<&'static str> =
+    vec!(
+        "rfc3339",
+        "%Y-%m-%d %H:%M:%S%.f%:z",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S"
+        );
 }
 
 fn insert_sql_data(
@@ -1119,9 +1129,19 @@ fn create_parquet(
         let name = field["name"].as_str().unwrap();
         let field_type = field["type"].as_str().unwrap();
 
-        let field = match field_type {
-            "number" => Field::new(name, DataType::Float64, true),
-            "integer" => Field::new(name, DataType::Int64, true),
+        let format_type = field["format"].as_str().unwrap_or("_");
+
+        let field = match (field_type, format_type) {
+            ("number", _) => Field::new(name, DataType::Float64, true),
+            ("integer", _) => Field::new(name, DataType::Int64, true),
+            ("boolean", _) => Field::new(name, DataType::Boolean, true),
+            ("datetime", f) => {
+                if PARQUET_ALLOWED_DATE_FORMATS.contains(&f) {
+                    Field::new(name, DataType::Timestamp(TimeUnit::Nanosecond, None), true)
+                } else {
+                    Field::new(name, DataType::Utf8, true)
+                }
+            },
             _ => Field::new(name, DataType::Utf8, true),
         };
         arrow_fields.push(field);
@@ -2126,6 +2146,20 @@ mod tests {
         )
         .unwrap();
     }
+
+    #[test]
+    fn test_parquet_dates_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        let _res = csvs_to_parquet(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec!["fixtures/parquet_date.csv".into()],
+        )
+        .unwrap();
+    }
+
 
     #[test]
     fn test_xlsx_from_csvs() {
