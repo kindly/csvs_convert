@@ -130,6 +130,8 @@ pub struct Options {
     pub stats_csv: String,
     #[builder(default)]
     pub threads: usize,
+    #[builder(default)]
+    pub show_queries: bool,
 }
 
 lazy_static::lazy_static! {
@@ -1569,12 +1571,15 @@ pub fn datapackage_to_postgres(postgres_url: String, datapackage: String) -> Res
     datapackage_to_postgres_with_options(postgres_url, datapackage, options)
 }
 
+
 pub fn datapackage_to_postgres_with_options(
     postgres_url: String,
     datapackage: String,
     options: Options,
 ) -> Result<(), Error> {
     let (table_to_schema, ordered_tables) = get_table_info(&datapackage, &options)?;
+
+    let show_queries = options.show_queries || postgres_url.is_empty(); 
 
     let mut conf = postgres_url.clone();
 
@@ -1594,7 +1599,11 @@ pub fn datapackage_to_postgres_with_options(
         }
     }
 
-    let mut client = Client::connect(&conf, NoTls).context(PostgresSnafu {})?;
+    let mut client= if !postgres_url.is_empty() {
+        Some(Client::connect(&conf, NoTls).context(PostgresSnafu {})?)
+    } else {
+        None
+    };
 
     for table in ordered_tables {
         let resource = table_to_schema.get(&table).unwrap();
@@ -1614,44 +1623,50 @@ pub fn datapackage_to_postgres_with_options(
 
         if !options.schema.is_empty() {
             resource_postgres = format!(
-                "
-                CREATE SCHEMA IF NOT EXISTS \"{schema}\";
-                set search_path = \"{schema}\";
-                {resource_postgres};
-            ",
+r#"
+CREATE SCHEMA IF NOT EXISTS "{schema}";
+set search_path = "{schema}";
+{resource_postgres};
+"#,
                 schema = options.schema
             );
             schema_table = format!("\"{schema}\".\"{table}\"", schema = options.schema);
         }
 
-        let result = client
-            .query_one("SELECT to_regclass($1)::TEXT", &[&schema_table])
-            .context(PostgresSnafu {})?;
-        let exists: Option<String> = result.get(0);
+        let mut create = true;
 
-        let mut create = exists.is_none();
+        if let Some(client) = client.as_mut() {
+            let result = client
+                .query_one("SELECT to_regclass($1)::TEXT", &[&schema_table])
+                .context(PostgresSnafu {})?;
+            let exists: Option<String> = result.get(0);
+            create = exists.is_none();
+        }
+
 
         let mut drop = options.drop;
 
         let mut existing_columns = None;
 
         if !create && options.evolve {
-            let result = client
-                .query_opt(&format!("SELECT * FROM {schema_table} limit 1"), &[])
-                .context(PostgresSnafu {})?;
-            if result.is_none() {
-                drop = true
-            }
-            if let Some(row) = result {
-                let mut columns = HashMap::new();
-                for column in row.columns() {
-                    columns.insert(column.name().to_owned(), column.type_().to_string());
+            if let Some(client) = client.as_mut() {
+                let result = client
+                    .query_opt(&format!("SELECT * FROM {schema_table} limit 1"), &[])
+                    .context(PostgresSnafu {})?;
+                if result.is_none() {
+                    drop = true
                 }
-                existing_columns = Some(columns)
+                if let Some(row) = result {
+                    let mut columns = HashMap::new();
+                    for column in row.columns() {
+                        columns.insert(column.name().to_owned(), column.type_().to_string());
+                    }
+                    existing_columns = Some(columns)
+                }
             }
         }
 
-        if drop && exists.is_some() {
+        if drop && !create {
             create = true;
             let mut drop_statement = String::new();
             if !options.schema.is_empty() {
@@ -1663,15 +1678,25 @@ pub fn datapackage_to_postgres_with_options(
                 .unwrap();
             }
             write!(drop_statement, "DROP TABLE IF EXISTS \"{table}\" CASCADE;").unwrap();
-            client
-                .batch_execute(&drop_statement)
-                .context(PostgresSnafu {})?
+            if let Some(client) = client.as_mut() {
+                if show_queries {
+                    println!("{drop_statement}")
+                }
+                client
+                    .batch_execute(&drop_statement)
+                    .context(PostgresSnafu {})?
+            }
         }
 
         if create {
-            client
-                .batch_execute(&resource_postgres)
-                .context(PostgresSnafu {})?;
+            if show_queries {
+                println!("{resource_postgres}")
+            }
+            if let Some(client) = client.as_mut() {
+                client
+                    .batch_execute(&resource_postgres)
+                    .context(PostgresSnafu {})?;
+            }
         }
 
         let mut columns = vec![];
@@ -1691,19 +1716,29 @@ pub fn datapackage_to_postgres_with_options(
         if let Some(existing_columns) = existing_columns {
             let (add_columns, alter_columns) = get_column_changes(resource, existing_columns);
             for (name, type_) in add_columns {
-                client
-                    .batch_execute(&format!(
-                        "ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}"
-                    ))
-                    .context(PostgresSnafu {})?;
+                if let Some(client) = client.as_mut() {
+                    if show_queries {
+                        println!("ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}")
+                    }
+                    client
+                        .batch_execute(&format!(
+                            "ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}"
+                        ))
+                        .context(PostgresSnafu {})?;
+                }
             }
 
             for name in alter_columns {
-                client
-                    .batch_execute(&format!(
-                        "ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT"
-                    ))
-                    .context(PostgresSnafu {})?;
+                if let Some(client) = client.as_mut() {
+                    if show_queries {
+                        println!("ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT")
+                    }
+                    client
+                        .batch_execute(&format!(
+                            "ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT"
+                        ))
+                        .context(PostgresSnafu {})?;
+                }
             }
         }
 
@@ -1732,31 +1767,41 @@ pub fn datapackage_to_postgres_with_options(
             .context(DelimeiterSnafu {})?
             .to_owned();
 
+        let query = format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'");
+        if show_queries {
+            println!("copy {schema_table}({all_columns}) from '{resource_path}' WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'");
+        }
+
         match csv_readers {
+
             Readers::Zip(mut zip) => {
                 let mut zipped_file = zip.by_name(resource_path).context(ZipSnafu {
                     filename: &datapackage,
                 })?;
 
-                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'")).context(PostgresSnafu {})?;
-                std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {
-                    filename: resource_path,
-                })?;
-                writer.finish().context(PostgresSnafu {})?;
+                if let Some(client) = client.as_mut() {
+                    let mut writer = client.copy_in(&query).context(PostgresSnafu {})?;
+                    std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {
+                        filename: resource_path,
+                    })?;
+                    writer.finish().context(PostgresSnafu {})?;
+                }
             }
             Readers::File(csv_file) => {
-                let (filename, mut file) = csv_file;
-                let mut writer = client.copy_in(&format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'")).context(PostgresSnafu {})?;
-                std::io::copy(&mut file, &mut writer).context(IoSnafu {
-                    filename: resource_path,
-                })?;
-                file.flush().unwrap();
-                writer.finish().context(PostgresSnafu {})?;
-
-                if options.delete_input_csv {
-                    std::fs::remove_file(&filename).context(IoSnafu {
-                        filename: filename.to_string_lossy(),
+                if let Some(client) = client.as_mut() {
+                    let (filename, mut file) = csv_file;
+                    let mut writer = client.copy_in(&query).context(PostgresSnafu {})?;
+                    std::io::copy(&mut file, &mut writer).context(IoSnafu {
+                        filename: resource_path,
                     })?;
+                    file.flush().unwrap();
+                    writer.finish().context(PostgresSnafu {})?;
+
+                    if options.delete_input_csv {
+                        std::fs::remove_file(&filename).context(IoSnafu {
+                            filename: filename.to_string_lossy(),
+                        })?;
+                    }
                 }
             }
         }
@@ -2259,10 +2304,25 @@ mod tests {
 
     #[test]
     fn test_csvs_db() {
-        let options = Options::builder().drop(true).schema("test".into()).build();
+        let options = Options::builder().drop(true).show_queries(true).schema("test".into()).build();
 
         csvs_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_csvs_db_no_conn() {
+        let options = Options::builder().drop(true).build();
+
+        csvs_to_postgres_with_options(
+            "".into(),
             vec![
                 "src/fixtures/all_types.csv".into(),
                 "src/fixtures/all_types_semi_colon.csv".into(),
