@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.7.9"
+version = "0.7.10"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -31,6 +31,7 @@ counter = "0.5.7"
 crossbeam-channel = "0.5.6"
 csv-index = "0.1.6"
 threadpool = "1.8.1"
+log = "0.4.17"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 

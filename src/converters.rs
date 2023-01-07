@@ -1407,10 +1407,15 @@ fn create_sheet(
                 cell = INVALID_REGEX.replace_all(&cell, "").to_string();
             }
 
+            if cell.len() > 32767 {
+                log::warn!("WARNING: Cell larger than 32767 chararcters which is too large for XLSX format. The cell will be truncated, so some data will be missing.");
+                cell.truncate(32767)
+            }
+
             worksheet
                 .write_string(
-                    row_num.try_into().unwrap(),
-                    col_index.try_into().unwrap(),
+                    row_num.try_into().expect("already tested length of string"),
+                    col_index.try_into().expect("already checked field count"),
                     &cell,
                     format,
                 )
