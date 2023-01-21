@@ -5,19 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.7.12] - 2023-01-21
+
+### New
+
+- `dump_file` option which will create dump files for `psql` and `sqlite3` cli tools.
+
 ## [0.7.11] - 2022-01-07
 
 ### Fixed
 
 - WASM dependancy loop
 
-## [0.7.10] - 2022-01-06
+## [0.7.10] - 2023-01-06
 
 ### Fixed
 
 - Truncate for too large xlsx cell.
 
-## [0.7.9] - 2022-01-01
+## [0.7.9] - 2023-01-01
 
 ### Changed
 
