@@ -1,0 +1,38 @@
+---
+source: src/converters.rs
+expression: lines
+---
+- PRAGMA journal_mode = OFF;
+- "         PRAGMA synchronous = 0;"
+- "         PRAGMA locking_mode = EXCLUSIVE;"
+- "         PRAGMA temp_store = MEMORY;"
+- ".mode csv"
+- "drop table if exists [all_types_semi_colon];"
+- "CREATE TABLE [all_types_semi_colon] ( [string] TEXT "
+- " , [array] JSONB "
+- " , [object] JSONB "
+- " , [date] TIMESTAMP "
+- " , [datetime] TIMESTAMP "
+- " , [time] TEXT "
+- " , [boolean] BOOL "
+- " , [number] NUMERIC "
+- " , [integer] INTEGER "
+- "); "
+- ""
+- ".separator ';'"
+- ".import 'src/fixtures/all_types_semi_colon.csv' all_types_semi_colon --skip 1 "
+- "drop table if exists [all_types];"
+- "CREATE TABLE [all_types] ( [string] TEXT "
+- " , [array] JSONB "
+- " , [object] JSONB "
+- " , [date] TIMESTAMP "
+- " , [datetime] TIMESTAMP "
+- " , [time] TEXT "
+- " , [boolean] BOOL "
+- " , [number] NUMERIC "
+- " , [integer] INTEGER "
+- "); "
+- ""
+- ".separator ','"
+- ".import 'src/fixtures/all_types.csv' all_types --skip 1 "
+
