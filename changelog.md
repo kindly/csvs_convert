@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.7.13] - 2023-01-22
+
+### New
+
+- `force_string` option for describers that will force the type to be string.
+
 ## [0.7.12] - 2023-01-21
 
 ### New

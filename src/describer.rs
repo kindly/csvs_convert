@@ -121,6 +121,8 @@ pub struct Options {
     pub stats: bool,
     #[builder(default)]
     pub mergable_stats: bool,
+    #[builder(default)]
+    pub force_string: bool,
 }
 
 #[derive(Debug)]
@@ -152,10 +154,15 @@ impl Describer {
 
     pub fn new_with_options(options: Options) -> Describer {
         let scale_function = tdigest::K1::new(100.into());
+        let descriptions = if options.force_string {
+            vec![]
+        } else {
+            descriptions()
+        };
         return Describer {
             count: 0,
             empty_count: 0,
-            descriptions: descriptions(),
+            descriptions,
             to_delete: vec![],
             options,
             no_string_stats: false,

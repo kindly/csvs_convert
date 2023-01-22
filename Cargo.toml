@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.7.12"
+version = "0.7.13"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
