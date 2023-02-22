@@ -47,44 +47,44 @@ fn datetime_formats() -> Vec<&'static str> {
         "%Y-%m-%d %H:%M",
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %I:%M:%S %P",
-        "%Y-%m-%d %I:%M %P",
+        "%Y-%m-%d %I:%M:%S %p",
+        "%Y-%m-%d %I:%M %p",
         "%Y %b %d %H:%M:%S",
         "%B %d %Y %H:%M:%S",
-        "%B %d %Y %I:%M:%S %P",
-        "%B %d %Y %I:%M %P",
-        "%Y %b %d at %I:%M %P",
-        "%d %B %Y %H:%M:%S",
+        "%B %d %Y %I:%M:%S %p",
+        "%B %d %Y %I:%M %p",
+        "%Y %b %d at %I:%M %p",
+        "%d %B %Y %H:%M:%p",
         "%d %B %Y %H:%M",
         "%d %B %Y %H:%M:%S.%f",
-        "%d %B %Y %I:%M:%S %P",
-        "%d %B %Y %I:%M %P",
+        "%d %B %Y %I:%M:%S %p",
+        "%d %B %Y %I:%M %p",
         "%B %d %Y %H:%M",
         "%m/%d/%y %H:%M:%S",
         "%m/%d/%y %H:%M",
         "%m/%d/%y %H:%M:%S.%f",
-        "%m/%d/%y %I:%M:%S %P",
-        "%m/%d/%y %I:%M %P",
+        "%m/%d/%y %I:%M:%S %p",
+        "%m/%d/%y %I:%M %p",
         "%m/%d/%Y %H:%M:%S",
         "%m/%d/%Y %H:%M",
         "%m/%d/%Y %H:%M:%S.%f",
-        "%m/%d/%Y %I:%M:%S %P",
-        "%m/%d/%Y %I:%M %P",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %I:%M %p",
         "%d/%m/%y %H:%M:%S",
         "%d/%m/%y %H:%M",
         "%d/%m/%y %H:%M:%S.%f",
-        "%d/%m/%y %I:%M:%S %P",
-        "%d/%m/%y %I:%M %P",
+        "%d/%m/%y %I:%M:%S %p",
+        "%d/%m/%y %I:%M %p",
         "%d/%m/%Y %H:%M:%S",
         "%d/%m/%Y %H:%M",
         "%d/%m/%Y %H:%M:%S.%f",
-        "%d/%m/%Y %I:%M:%S %P",
-        "%d/%m/%Y %I:%M %P",
+        "%d/%m/%Y %I:%M:%S %p",
+        "%d/%m/%Y %I:%M %p",
         "%Y/%m/%d %H:%M:%S",
         "%Y/%m/%d %H:%M",
         "%Y/%m/%d %H:%M:%S.%f",
-        "%Y/%m/%d %I:%M:%S %P",
-        "%Y/%m/%d %I:%M %P",
+        "%Y/%m/%d %I:%M:%S %p",
+        "%Y/%m/%d %I:%M %p",
         "%y%m%d %H:%M:%S",
     ]
 }
@@ -99,8 +99,8 @@ fn datetime_tz_formats() -> Vec<&'static str> {
         "%Y-%m-%d %H:%M:%S.%f %Z",
         "%B %d %Y %H:%M:%S %Z",
         "%B %d %Y %H:%M %Z",
-        "%B %d %Y %I:%M:%S %P %Z",
-        "%B %d %Y %I:%M %P %Z",
+        "%B %d %Y %I:%M:%S %p %Z",
+        "%B %d %Y %I:%M %p %Z",
     ]
 }
 
@@ -112,7 +112,7 @@ fn date_formats() -> Vec<&'static str> {
 }
 
 fn time_formats() -> Vec<&'static str> {
-    vec!["%H:%M", "%I:%M:%S %P", "%I:%M %P"]
+    vec!["%H:%M", "%I:%M:%S %p", "%I:%M %p"]
 }
 
 #[derive(Default, Debug, TypedBuilder, Clone)]

@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.7.13"
+version = "0.8.0"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -35,17 +35,13 @@ log = "0.4.17"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 
-parquet = { version = "29.0.0", default-features = false, features = ["arrow", "snap"] }
+duckdb = { version = "0.7.0", features = ["bundled"] }
 arrow = { version = "29.0.0", default-features = false, features = ["csv"] }
 xlsxwriter = "0.5.0"
 postgres = "0.19.4"
 minijinja = { version = "0.27.0" }
 zip = { version = "0.6.3", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.28.0", features = ["bundled"] }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-#getrandom = {version="0.2", features = ["js"]}
-#regex = {version="1.7", features = ["std"]}
 
 [profile.bench]
 debug = true

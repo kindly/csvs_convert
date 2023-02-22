@@ -4,6 +4,7 @@ use csv::Writer;
 use minijinja::Environment;
 use postgres::{Client, NoTls};
 use rusqlite::Connection;
+use duckdb::Connection as DuckdbConnection;
 use serde_json::{Value, json};
 use snafu::prelude::*;
 use snafu::{ensure, Snafu};
@@ -17,17 +18,14 @@ use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use xlsxwriter::Workbook;
 
-use arrow::csv::Reader;
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::error::ArrowError;
-use parquet::{
-    arrow::ArrowWriter, basic::Compression, errors::ParquetError,
-    file::properties::WriterProperties,
-};
 
 #[non_exhaustive]
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("{}", message))]
+    DatapackageConvert { message: String },
+
     #[snafu(display("{}", message))]
     DatapackageMergeError { message: String },
 
@@ -77,9 +75,6 @@ pub enum Error {
     JinjaError { source: minijinja::Error },
 
     #[snafu(display("{}", source))]
-    ParquetError { source: ParquetError },
-
-    #[snafu(display("{}", source))]
     ArrowError { source: ArrowError },
 
     #[snafu(display("Postgres Error: {}", source))]
@@ -102,6 +97,9 @@ pub enum Error {
 
     #[snafu(display("{}", source))]
     DescribeError { source: describe::DescribeError },
+
+    #[snafu(display("{}", source))]
+    DuckDbError { source: duckdb::Error },
 }
 
 #[derive(Default, Debug, TypedBuilder)]
@@ -138,6 +136,8 @@ pub struct Options {
     pub threads: usize,
     #[builder(default)]
     pub dump_file: String,
+    #[builder(default)]
+    pub pipe: bool
 }
 
 lazy_static::lazy_static! {
@@ -391,42 +391,23 @@ fn write_merged_csv(
     Ok(csv_writer)
 }
 
-enum Readers {
-    File((PathBuf, File)),
-    Zip(zip::ZipArchive<File>),
-}
 
-fn get_reader(file: &str, resource_path: &str, options: &Options) -> Result<Readers, Error> {
+fn get_path(file: &str, resource_path: &str, options: &Options) -> Result<PathBuf, Error> {
     if options.datapackage_string {
-        Ok(Readers::File((
-            resource_path.into(),
-            File::open(resource_path).context(IoSnafu {
-                filename: resource_path,
-            })?,
-        )))
+        Ok(resource_path.into())
     } else if file.ends_with(".json") {
         let mut file_pathbuf = PathBuf::from(file);
         file_pathbuf.pop();
         file_pathbuf.push(resource_path);
-        Ok(Readers::File((
-            file_pathbuf.clone(),
-            File::open(&file_pathbuf).context(IoSnafu {
-                filename: file_pathbuf.to_string_lossy(),
-            })?,
-        )))
-    } else if file.ends_with(".zip") {
-        let zip_file = File::open(file).context(IoSnafu { filename: file })?;
-        let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu { filename: file })?;
-        Ok(Readers::Zip(zip))
+        Ok(file_pathbuf)
+    //} else if file.ends_with(".zip") {
+    //    let zip_file = File::open(file).context(IoSnafu { filename: file })?;
+    //    let zip = zip::ZipArchive::new(zip_file).context(ZipSnafu { filename: file })?;
+    //    Ok(Readers::Zip(zip))
     } else if PathBuf::from(&file).is_dir() {
         let file_pathbuf = PathBuf::from(file);
         let file_pathbuf = file_pathbuf.join(resource_path);
-        Ok(Readers::File((
-            file_pathbuf.clone(),
-            File::open(&file_pathbuf).context(IoSnafu {
-                filename: file_pathbuf.to_string_lossy(),
-            })?,
-        )))
+        Ok(file_pathbuf.clone())
     } else {
         Err(Error::DatapackageMergeError {
             message: "could not detect a datapackage".into(),
@@ -549,30 +530,25 @@ pub fn merge_datapackage_with_options(
 
             let output_fields = output_fields.get_mut(&resource_path).unwrap();
 
-            let csv_readers = get_reader(file, &resource_path, &options)?;
+            let tempdir: Option<TempDir>;
 
-            match csv_readers {
-                Readers::Zip(mut zip) => {
-                    let zipped_file = zip
-                        .by_name(&resource_path)
-                        .context(ZipSnafu { filename: file })?;
-                    let csv_reader =
-                        get_csv_reader_builder(&options, resource).from_reader(zipped_file);
-                    csv_output =
-                        write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
-                }
-                Readers::File(file_reader) => {
-                    let (filename, file_reader) = file_reader;
-                    let csv_reader =
-                        get_csv_reader_builder(&options, resource).from_reader(file_reader);
-                    csv_output =
-                        write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
-                    if options.delete_input_csv {
-                        std::fs::remove_file(&filename).context(IoSnafu {
-                            filename: filename.to_string_lossy(),
-                        })?;
-                    }
-                }
+            let csv_path = if file.ends_with(".zip") {
+                tempdir = Some(TempDir::new().context(IoSnafu { filename: file })?);
+                extract_csv_file(file, &resource_path, &tempdir)?
+            } else {
+                get_path(file, &resource_path, &options)?
+            };
+
+            let csv_reader =
+                get_csv_reader_builder(&options, resource).from_path(&csv_path).unwrap();
+
+            csv_output =
+                write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
+
+            if options.delete_input_csv {
+                std::fs::remove_file(&csv_path).context(IoSnafu {
+                    filename: csv_path.to_string_lossy(),
+                })?;
             }
 
             csv_outputs.insert(resource_path, csv_output);
@@ -590,6 +566,18 @@ pub fn merge_datapackage_with_options(
     }
 
     Ok(())
+}
+
+fn extract_csv_file(file: &String, resource_path: &String, tempdir: &Option<TempDir>) -> Result<PathBuf, Error> {
+    let zip_file = File::open(file).context(IoSnafu { filename: file })?;
+    let mut zip = zip::ZipArchive::new(zip_file).context(ZipSnafu { filename: file })?;
+    let mut zipped_file = zip
+        .by_name(resource_path)
+        .context(ZipSnafu { filename: file })?;
+    let output_path = tempdir.as_ref().unwrap().path().join("file.csv");
+    let mut output_file = File::create(&output_path).context(IoSnafu { filename: file })?;
+    std::io::copy(&mut zipped_file, &mut output_file).context(IoSnafu { filename: file })?;
+    Ok(output_path)
 }
 
 fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBuilder {
@@ -809,7 +797,7 @@ lazy_static::lazy_static! {
         "%Y.%m.%d",
         "%y%m%d %H:%M:%S");
 
-    pub static ref PARQUET_ALLOWED_DATE_FORMATS: Vec<&'static str> =
+    pub static ref PARQUET_ALLOWED_DEFAULT: Vec<&'static str> =
     vec!(
         "rfc3339",
         "%Y-%m-%d %H:%M:%S%.f%:z",
@@ -818,6 +806,46 @@ lazy_static::lazy_static! {
         "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S"
         );
+
+    pub static ref PARQUET_ALLOWED_FORMAT: Vec<&'static str> =
+    vec!(
+        //"%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %I:%M:%S %p",
+        "%Y-%m-%d %I:%M %p",
+        "%Y %b %d %H:%M:%S",
+        "%B %d %Y %H:%M:%S",
+        "%B %d %Y %I:%M:%S %p",
+        "%B %d %Y %I:%M %p",
+        "%Y %b %d at %I:%M %p",
+        "%d %B %Y %H:%M:%p",
+        "%d %B %Y %H:%M",
+        "%d %B %Y %I:%M:%S %p",
+        "%d %B %Y %I:%M %p",
+        "%B %d %Y %H:%M",
+        "%m/%d/%y %H:%M:%S",
+        "%m/%d/%y %H:%M",
+        "%m/%d/%y %I:%M:%S %p",
+        "%m/%d/%y %I:%M %p",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %I:%M %p",
+        "%d/%m/%y %H:%M:%S",
+        "%d/%m/%y %H:%M",
+        "%d/%m/%y %I:%M:%S %p",
+        "%d/%m/%y %I:%M %p",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y %I:%M:%S %p",
+        "%d/%m/%Y %I:%M %p",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y/%m/%d %I:%M:%S %p",
+        "%Y/%m/%d %I:%M %p",
+        "%y%m%d %H:%M:%S",
+    );
+
 }
 
 fn insert_sql_data(
@@ -1053,29 +1081,27 @@ pub fn datapackage_to_sqlite_with_options(
         let resource_path = resource["path"].as_str().unwrap();
 
         if let Some(conn) = conn.as_mut() {
-            let csv_readers = get_reader(&datapackage, resource_path, &options)?;
 
-            match csv_readers {
-                Readers::Zip(mut zip) => {
-                    let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
-                        filename: &datapackage,
-                    })?;
-                    let csv_reader =
-                        get_csv_reader_builder(&options, resource).from_reader(zipped_file);
-                    insert_sql_data(csv_reader, conn, resource.clone())?
-                }
-                Readers::File(csv_file) => {
-                    let (filename, file) = csv_file;
-                    let csv_reader = get_csv_reader_builder(&options, resource).from_reader(file);
-                    insert_sql_data(csv_reader, conn, resource.clone())?;
-                    if options.delete_input_csv {
-                        std::fs::remove_file(&filename).context(IoSnafu {
-                            filename: filename.to_string_lossy(),
-                        })?;
-                    }
-                }
+            let tempdir: Option<TempDir>;
+
+            let csv_path = if datapackage.ends_with(".zip") {
+                tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
+                extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+            } else {
+                get_path(&datapackage, resource_path, &options)?
+            };
+
+            let csv_reader =
+                get_csv_reader_builder(&options, resource).from_path(&csv_path).context(CSVSnafu { filename: csv_path.to_string_lossy().to_owned() })?;
+            insert_sql_data(csv_reader, conn, resource.clone())?;
+
+            if options.delete_input_csv {
+                std::fs::remove_file(&csv_path).context(IoSnafu {
+                    filename: csv_path.to_string_lossy(),
+                })?;
             }
         }
+
         if let Some(dump_writer) = dump_writer.as_mut() {
             let table_value = json!(table);
             let table_name = resource.get("title").unwrap_or(resource.get("name").unwrap_or(&table_value)).as_str().unwrap_or(&table);
@@ -1155,7 +1181,7 @@ fn get_table_info(
 }
 
 fn create_parquet(
-    file: impl std::io::Read,
+    file: PathBuf,
     resource: Value,
     mut output_path: PathBuf,
     options: &Options,
@@ -1169,7 +1195,8 @@ fn create_parquet(
 
     output_path.push(format!("{}.parquet", resource["name"].as_str().unwrap()));
 
-    let mut arrow_fields = vec![];
+    let mut select_fields = vec![];
+    let mut type_fields = vec![];
 
     ensure!(
         resource["schema"]["fields"].is_array(),
@@ -1204,63 +1231,183 @@ fn create_parquet(
 
         let format_type = field["format"].as_str().unwrap_or("_");
 
-        let field = match (field_type, format_type) {
-            ("number", _) => Field::new(name, DataType::Float64, true),
-            ("integer", _) => Field::new(name, DataType::Int64, true),
-            ("boolean", _) => Field::new(name, DataType::Boolean, true),
-            ("datetime", f) => {
-                if PARQUET_ALLOWED_DATE_FORMATS.contains(&f) {
-                    Field::new(name, DataType::Timestamp(TimeUnit::Nanosecond, None), true)
-                } else {
-                    Field::new(name, DataType::Utf8, true)
-                }
+        match (field_type, format_type) {
+            ("number", _) => {
+                select_fields.push(format!("\"{name}\""));
+                type_fields.push(format!("\"{name}\": 'DOUBLE'"))
             },
-            _ => Field::new(name, DataType::Utf8, true),
+            ("integer", _) => {
+                select_fields.push(format!("\"{name}\""));
+                type_fields.push(format!("\"{name}\": 'BIGINT'"));
+            },
+            ("boolean", _) => {
+                select_fields.push(format!("\"{name}\""));
+                type_fields.push(format!("\"{name}\": 'BOOLEAN'"));
+            },
+            ("datetime", f) => {
+                if PARQUET_ALLOWED_DEFAULT.contains(&f) {
+                    select_fields.push(format!("CAST(\"{name}\" AS TIMESTAMP)"));
+                } else if PARQUET_ALLOWED_FORMAT.contains(&f) {
+                    select_fields.push(format!("strptime(\"{name}\", '{f}')"));
+                } else {
+                    select_fields.push(format!("\"{name}\""));
+                }
+                type_fields.push(format!("\"{name}\": 'VARCHAR'"));
+            },
+            _ => {
+                select_fields.push(format!("\"{name}\""));
+                type_fields.push(format!("\"{name}\": 'VARCHAR'"));
+            },
         };
-        arrow_fields.push(field);
     }
 
-    let mut delimiter = options.delimiter.unwrap_or(b',');
+    let mut delimiter = ",".to_string();
+    let mut quote = "\"".to_string();
+
+    if let Some(delim) = options.delimiter {
+        delimiter = std::str::from_utf8(&[delim])
+            .context(DelimeiterSnafu {})?
+            .to_owned();
+    }
+
+    if let Some(q) = options.quote {
+        quote = std::str::from_utf8(&[q])
+            .context(DelimeiterSnafu {})?
+            .to_owned();
+    }
+
     if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
         if dialect_delimiter.as_bytes().len() == 1 {
-            delimiter = *dialect_delimiter.as_bytes().first().unwrap()
+            delimiter = dialect_delimiter.to_string()
         }
     };
 
-    let arrow_csv_reader = Reader::new(
-        file,
-        std::sync::Arc::new(Schema::new(arrow_fields)),
-        true,
-        Some(delimiter),
-        1024,
-        None,
-        None,
-        None,
-    );
+    let conn = DuckdbConnection::open_in_memory().context(DuckDbSnafu {})?;
 
-    let props = WriterProperties::builder()
-        .set_dictionary_enabled(false)
-        .set_compression(Compression::SNAPPY);
+    let type_fields_str = type_fields.join(", ");
+    let columns = format!("{{ {type_fields_str} }}");
 
-    let output = File::create(&output_path).context(IoSnafu {
-        filename: output_path.to_string_lossy(),
-    })?;
+    let select = select_fields.join(" ,");
 
-    let mut writer = ArrowWriter::try_new(output, arrow_csv_reader.schema(), Some(props.build()))
-        .context(ParquetSnafu {})?;
+    let file_path = file.to_string_lossy().to_string();
 
-    for batch in arrow_csv_reader {
-        let record_batch = batch.context(ArrowSnafu {})?;
-        writer.write(&record_batch).context(ParquetSnafu {})?;
-    }
+    let output_string = output_path.to_string_lossy();
+    let statement = format!("COPY (SELECT {select} FROM read_csv('{file_path}', header=1, quote='{quote}', sep='{delimiter}', columns = {columns})) TO '{output_string}' ");
 
-    match writer.close() {
-        Ok(_) => Ok(()),
-        Err(error) => Err(error),
-    }
-    .context(ParquetSnafu {})?;
+    conn.execute_batch("INSTALL parquet; LOAD parquet").context(DuckDbSnafu {})?;
+    conn.execute_batch(&statement).context(DuckDbSnafu {})?;
 
     Ok(())
+}
+
+
+fn create_parquet_auto(
+    file: PathBuf,
+    mut output_path: PathBuf,
+    options: &Options,
+) -> Result<Value, Error> {
+
+    ensure!(
+        file.exists() || file == PathBuf::from("/dev/stdin") || file == PathBuf::from("-"),
+        DatapackageConvertSnafu {
+            message: format!("File does not exist {}", file.to_string_lossy())
+        }
+    );
+
+    let mut file_name = file.file_stem().unwrap().to_string_lossy().to_string();
+
+    let mut file_path = file.to_string_lossy().to_string();
+    if file_path == "-" {
+        file_path = "/dev/stdin".into();
+        file_name = "stdin".into();
+    }
+
+    output_path.push(format!("{file_name}.parquet"));
+
+    let conn = DuckdbConnection::open_in_memory().context(DuckDbSnafu {})?;
+
+    let output_string = output_path.to_string_lossy();
+
+    let mut option_vec = vec![];
+
+    option_vec.push("AUTO_DETECT=1".to_owned());
+
+    if let Some(delim) = options.delimiter {
+        let delimiter = std::str::from_utf8(&[delim])
+            .context(DelimeiterSnafu {})?
+            .to_owned();
+        option_vec.push(format!("SEP={delimiter}"))
+    }
+
+    if let Some(quote) = options.quote {
+        let quote = std::str::from_utf8(&[quote])
+            .context(DelimeiterSnafu {})?
+            .to_owned();
+        option_vec.push(format!("QUOTE={quote}"))
+    }
+    let duckdb_options = option_vec.join(", ");
+
+    let statement = format!("COPY (SELECT * FROM read_csv('{file_path}', {duckdb_options})) TO '{output_string}' ");
+
+    conn.execute_batch("INSTALL parquet; LOAD parquet").context(DuckDbSnafu {})?;
+
+    conn.execute_batch(&statement).context(DuckDbSnafu {})?;
+
+    let mut stmt = conn.prepare("SELECT name, type, converted_type FROM parquet_schema(?);").context(DuckDbSnafu {})?;
+
+    let mut rows = stmt.query(duckdb::params![output_path.to_string_lossy()]).unwrap();
+
+    let mut fields: Vec<Value> = vec![];
+
+    while let Some(row) = rows.next().unwrap() {
+        let mut field_type = "string";
+        let row_type: String = row.get(1).unwrap();
+        let converted_type: String = row.get(2).unwrap();
+        let name: String = row.get(0).unwrap();
+
+        if name == "duckdb_schema" {
+            continue
+        }
+
+        if &row_type == "BOOLEAN" {
+            field_type = "boolean";
+        }
+
+        if &row_type == "DOUBLE" {
+            field_type = "number";
+        }
+
+        if &row_type == "INT64" && &converted_type == "INT_64" {
+            field_type = "integer";
+        }
+
+        if &row_type == "INT32" {
+            field_type = "integer";
+        }
+
+        if &row_type == "INT64" && converted_type.contains("TIMESTAMP")  {
+            field_type = "datetime";
+        }
+
+        let field = json!(
+            {
+                    "name": name,
+                    "type": field_type,
+                    "format": "",
+            }
+        );
+        fields.push(field);
+
+    }
+    let resource = json!({
+        "profile": "tabular-data-resource",
+        "name": file_name,
+        "schema": {
+            "fields": fields
+        },
+    });
+
+    Ok(resource)
 }
 
 pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
@@ -1282,21 +1429,50 @@ pub fn csvs_to_parquet_with_options(
     csvs: Vec<PathBuf>,
     mut options: Options,
 ) -> Result<Value, Error> {
-    let describe_options = describe::Options::builder()
-        .threads(options.threads)
-        .stats(options.stats)
-        .stats_csv(options.stats_csv.clone())
-        .delimiter(options.delimiter)
-        .quote(options.quote)
-        .build();
-    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
-        .context(DescribeSnafu {})?;
-    options.datapackage_string = true;
-    datapackage_to_parquet_with_options(
-        PathBuf::from(output_path),
-        serde_json::to_string(&datapackage).expect("should serialize"),
-        options,
-    )?;
+    let datapackage = if options.pipe {
+        stream_csvs_to_parquet(
+            output_path,
+            csvs,
+            options
+        )?
+    } else {
+        let describe_options = describe::Options::builder()
+            .threads(options.threads)
+            .stats(options.stats)
+            .stats_csv(options.stats_csv.clone())
+            .delimiter(options.delimiter)
+            .quote(options.quote)
+            .build();
+        let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+            .context(DescribeSnafu {})?;
+        options.datapackage_string = true;
+        datapackage_to_parquet_with_options(
+            PathBuf::from(output_path),
+            serde_json::to_string(&datapackage).expect("should serialize"),
+            options,
+        )?;
+        datapackage
+    };
+    Ok(datapackage)
+}
+
+fn stream_csvs_to_parquet(
+    output_path: String,
+    csvs: Vec<PathBuf>,
+    options: Options,
+) -> Result<Value, Error> {
+    std::fs::create_dir_all(&output_path).context(IoSnafu {
+        filename: output_path.clone(),
+    })?;
+    let mut resources = vec![];
+    for csv in csvs {
+        resources.push(create_parquet_auto(csv, output_path.clone().into(), &options)?)
+    }
+
+    let datapackage = json!({
+        "profile": "tabular-data-package",
+        "resources": resources
+    });
     Ok(datapackage)
 }
 
@@ -1331,24 +1507,21 @@ pub fn datapackage_to_parquet_with_options(
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_reader(&datapackage, resource_path, &options)?;
+        let tempdir: Option<TempDir>;
 
-        match csv_readers {
-            Readers::Zip(mut zip) => {
-                let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
-                    filename: &datapackage,
-                })?;
-                create_parquet(zipped_file, resource.clone(), output_path.clone(), &options)?
-            }
-            Readers::File(csv_reader) => {
-                let (filename, file) = csv_reader;
-                create_parquet(file, resource.clone(), output_path.clone(), &options)?;
-                if options.delete_input_csv {
-                    std::fs::remove_file(&filename).context(IoSnafu {
-                        filename: filename.to_string_lossy(),
-                    })?;
-                }
-            }
+        let csv_path = if datapackage.ends_with(".zip") {
+            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
+            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+        } else {
+            get_path(&datapackage, resource_path, &options)?
+        };
+
+        create_parquet(csv_path.clone(), resource.clone(), output_path.clone(), &options)?;
+
+        if options.delete_input_csv {
+            std::fs::remove_file(&csv_path).context(IoSnafu {
+                filename: csv_path.to_string_lossy(),
+            })?;
         }
     }
 
@@ -1569,32 +1742,25 @@ pub fn datapackage_to_xlsx_with_options(
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
 
-        let csv_readers = get_reader(&datapackage, resource_path, &options)?;
+        let tempdir: Option<TempDir>;
 
-        match csv_readers {
-            Readers::Zip(mut zip) => {
-                let zipped_file = zip.by_name(resource_path).context(ZipSnafu {
-                    filename: &datapackage,
-                })?;
-                let csv_reader = get_csv_reader_builder(&options, resource)
-                    .has_headers(false)
-                    .from_reader(zipped_file);
+        let csv_path = if datapackage.ends_with(".zip") {
+            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
+            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+        } else {
+            get_path(&datapackage, resource_path, &options)?
+        };
 
-                create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
-            }
-            Readers::File(csv_file) => {
-                let (filename, file) = csv_file;
-                let csv_reader = get_csv_reader_builder(&options, resource)
-                    .has_headers(false)
-                    .from_reader(file);
-                if options.delete_input_csv {
-                    std::fs::remove_file(&filename).context(IoSnafu {
-                        filename: filename.to_string_lossy(),
-                    })?;
-                }
-                create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
-            }
+        let csv_reader = get_csv_reader_builder(&options, resource)
+            .has_headers(false)
+            .from_path(&csv_path).context(CSVSnafu {filename: csv_path.to_string_lossy().to_string()})?;
+
+        if options.delete_input_csv {
+            std::fs::remove_file(&csv_path).context(IoSnafu {
+                filename: csv_path.to_string_lossy(),
+            })?;
         }
+        create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
     }
 
     Ok(())
@@ -1821,7 +1987,6 @@ set search_path = "{schema}";
             }
         }
 
-        let csv_readers = get_reader(&datapackage, resource_path, &options)?;
 
         let mut delimiter_u8 = options.delimiter.unwrap_or(b',');
 
@@ -1854,36 +2019,30 @@ set search_path = "{schema}";
             writeln!(dump_writer, "\\copy {schema_table}({all_columns}) from '{full_path}' WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'").context(IoSnafu {filename: &options.dump_file})?;
         }
 
-        match csv_readers {
-            Readers::Zip(mut zip) => {
-                let mut zipped_file = zip.by_name(resource_path).context(ZipSnafu {
-                    filename: &datapackage,
+        let tempdir: Option<TempDir>;
+
+        let csv_path = if datapackage.ends_with(".zip") {
+            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
+            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+        } else {
+            get_path(&datapackage, resource_path, &options)?
+        };
+
+        if let Some(client) = client.as_mut() {
+            let mut file = std::fs::File::open(&csv_path).context(IoSnafu {
+                filename: csv_path.to_string_lossy().to_owned(),
+            })?;
+            let mut writer = client.copy_in(&query).context(PostgresSnafu {})?;
+            std::io::copy(&mut file, &mut writer).context(IoSnafu {
+                filename: csv_path.to_string_lossy().to_owned(),
+            })?;
+            file.flush().unwrap();
+            writer.finish().context(PostgresSnafu {})?;
+
+            if options.delete_input_csv {
+                std::fs::remove_file(&csv_path).context(IoSnafu {
+                    filename: csv_path.to_string_lossy(),
                 })?;
-
-                if let Some(client) = client.as_mut() {
-                    let mut writer = client.copy_in(&query).context(PostgresSnafu {})?;
-                    std::io::copy(&mut zipped_file, &mut writer).context(IoSnafu {
-                        filename: resource_path,
-                    })?;
-                    writer.finish().context(PostgresSnafu {})?;
-                }
-            }
-            Readers::File(csv_file) => {
-                if let Some(client) = client.as_mut() {
-                    let (filename, mut file) = csv_file;
-                    let mut writer = client.copy_in(&query).context(PostgresSnafu {})?;
-                    std::io::copy(&mut file, &mut writer).context(IoSnafu {
-                        filename: resource_path,
-                    })?;
-                    file.flush().unwrap();
-                    writer.finish().context(PostgresSnafu {})?;
-
-                    if options.delete_input_csv {
-                        std::fs::remove_file(&filename).context(IoSnafu {
-                            filename: filename.to_string_lossy(),
-                        })?;
-                    }
-                }
             }
         }
     }
@@ -1932,7 +2091,7 @@ fn get_column_changes(
 mod tests {
     use super::*;
 
-    use parquet::file::reader::SerializedFileReader;
+    use insta::{assert_yaml_snapshot, assert_debug_snapshot};
     use rusqlite::types::ValueRef;
     use std::io::BufRead;
 
@@ -2205,24 +2364,36 @@ mod tests {
         assert!(!tmp.join("csv/games.csv").exists());
         assert!(!tmp.join("csv/games2.csv").exists());
 
-        let games1 = File::open(tmp.join("parquet/games.parquet")).unwrap();
-        let games2 = File::open(tmp.join("parquet/games2.parquet")).unwrap();
+        let games1 = tmp.join("parquet/games.parquet").to_string_lossy().to_string();
+        let games2 = tmp.join("parquet/games2.parquet").to_string_lossy().to_string();
 
         for file in [games1, games2] {
-            let reader = SerializedFileReader::new(file).unwrap();
+            let results = get_results(file);
+            insta::assert_debug_snapshot!(results)
+        }
+    }
 
-            let mut data = vec![];
-            for row in reader {
-                for (_idx, (name, field)) in row.get_column_iter().enumerate() {
-                    let field = match field {
-                        parquet::record::Field::Str(string) => string.to_owned(),
-                        other => other.to_string(),
-                    };
-                    data.push((name.to_owned(), field));
+    fn get_results(file: String) -> Vec<Vec<duckdb::types::Value>> {
+        let conn = DuckdbConnection::open_in_memory().unwrap();
+        conn.execute_batch("INSTALL parquet; LOAD parquet").unwrap();
+        let mut stmt = conn.prepare(&format!("select * from '{file}';")).unwrap();
+        let mut rows = stmt.query([]).unwrap();
+
+        let mut results = vec![];
+
+        while let Some(row) = rows.next().unwrap() {
+            let mut result_row = vec![];
+            for i in 0.. {
+                if let Ok(item) = row.get(i) {
+                    let cell: duckdb::types::Value = item;
+                    result_row.push(cell)
+                } else {
+                     break
                 }
             }
-            insta::assert_yaml_snapshot!(data)
+            results.push(result_row)
         }
+        results
     }
 
     #[test]
@@ -2242,23 +2413,43 @@ mod tests {
         assert!(tmp.join("parquet/games.parquet").exists());
         assert!(tmp.join("parquet/games2.parquet").exists());
 
-        let games1 = File::open(tmp.join("parquet/games.parquet")).unwrap();
-        let games2 = File::open(tmp.join("parquet/games2.parquet")).unwrap();
+        let games1 = tmp.join("parquet/games.parquet").to_string_lossy().to_string();
+        let games2 = tmp.join("parquet/games2.parquet").to_string_lossy().to_string();
 
         for file in [games1, games2] {
-            let reader = SerializedFileReader::new(file).unwrap();
+            let results = get_results(file);
+            insta::assert_debug_snapshot!(results)
+        }
+    }
 
-            let mut data = vec![];
-            for row in reader {
-                for (_idx, (name, field)) in row.get_column_iter().enumerate() {
-                    let field = match field {
-                        parquet::record::Field::Str(string) => string.to_owned(),
-                        other => other.to_string(),
-                    };
-                    data.push((name.to_owned(), field));
-                }
-            }
-            insta::assert_yaml_snapshot!(data)
+    #[test]
+    fn test_parquet_auto() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        let options = Options::builder().pipe(true).build();
+
+        let datapackage = csvs_to_parquet_with_options(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec![
+                "fixtures/add_resource/csv/games.csv".into(),
+                "fixtures/add_resource/csv/games2.csv".into(),
+            ],
+            options
+        )
+        .unwrap();
+
+        assert_yaml_snapshot!(datapackage);
+
+        assert!(tmp.join("parquet/games.parquet").exists());
+        assert!(tmp.join("parquet/games2.parquet").exists());
+
+        let games1 = tmp.join("parquet/games.parquet").to_string_lossy().to_string();
+        let games2 = tmp.join("parquet/games2.parquet").to_string_lossy().to_string();
+
+        for file in [games1, games2] {
+            let results = get_results(file);
+            insta::assert_debug_snapshot!(results)
         }
     }
 
@@ -2284,13 +2475,16 @@ mod tests {
         let tmp = tmp_dir.path().to_owned();
         //let tmp = PathBuf::from("/tmp");
 
-        let _res = csvs_to_parquet(
+        let res = csvs_to_parquet(
             tmp.join("parquet").to_string_lossy().into(),
             vec!["fixtures/parquet_date.csv".into()],
         )
         .unwrap();
+        assert_yaml_snapshot!(res);
+        let file = tmp.join("parquet").join("parquet_date.parquet").to_string_lossy().to_string();
+        let results = get_results(file);
+        assert_debug_snapshot!(results);
     }
-
 
     #[test]
     fn test_xlsx_from_csvs() {

@@ -1,0 +1,36 @@
+---
+source: src/converters.rs
+expression: results
+---
+[
+    [
+        Timestamp(
+            Microsecond,
+            1599572549190855,
+        ),
+        Timestamp(
+            Microsecond,
+            1599590549190855,
+        ),
+        Timestamp(
+            Microsecond,
+            1599572549190855,
+        ),
+        Timestamp(
+            Microsecond,
+            1599572549000000,
+        ),
+        Timestamp(
+            Microsecond,
+            1599572549190855,
+        ),
+        Timestamp(
+            Microsecond,
+            1599572549000000,
+        ),
+        Timestamp(
+            Microsecond,
+            1580305349000000,
+        ),
+    ],
+]

@@ -1,0 +1,27 @@
+---
+source: src/converters.rs
+expression: datapackage
+---
+profile: tabular-data-package
+resources:
+  - profile: tabular-data-resource
+    name: games
+    schema:
+      fields:
+        - name: id
+          type: integer
+          format: ""
+        - name: title
+          type: string
+          format: ""
+  - profile: tabular-data-resource
+    name: games2
+    schema:
+      fields:
+        - name: id
+          type: integer
+          format: ""
+        - name: title
+          type: string
+          format: ""
+
