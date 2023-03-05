@@ -2088,6 +2088,7 @@ fn get_column_changes(
     (add_columns, alter_columns)
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,22 @@
+---
+source: src/query.rs
+expression: data
+---
+[
+    [
+        BigInt(
+            1,
+        ),
+        Text(
+            "game1_add_resource",
+        ),
+    ],
+    [
+        BigInt(
+            2,
+        ),
+        Text(
+            "game2_add_resource",
+        ),
+    ],
+]

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### New
 
 - Use duckdb for parquet converstion. More datetime formats allowed.
-- `pipe` option to get data from stdin or named pipe.  
+- `pipe` option to get data from stdin or named pipe.
 
 ## [0.7.13] - 2023-01-22
 

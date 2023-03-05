@@ -1,0 +1,8 @@
+---
+source: src/query.rs
+expression: lines
+---
+[
+    "id,title",
+    "1,game1_add_resource",
+]
