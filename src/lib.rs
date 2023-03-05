@@ -24,6 +24,7 @@ mod converters;
 mod describe;
 mod describe_csv;
 mod describer;
+mod query;
 
 #[cfg(not(target_family = "wasm"))]
 mod zip_dir;
@@ -42,4 +43,8 @@ pub use converters::{
     datapackage_to_sqlite_with_options, datapackage_to_xlsx, datapackage_to_xlsx_with_options,
     merge_datapackage, merge_datapackage_jsons, merge_datapackage_with_options,
     Error, Options
+};
+#[cfg(not(target_family = "wasm"))]
+pub use query::{
+    query, Error as QueryError
 };

@@ -35,7 +35,7 @@ log = "0.4.17"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 
-duckdb = { version = "0.7.0", features = ["bundled"] }
+duckdb = { version = "0.7.1", features = ["bundled"] }
 arrow = { version = "29.0.0", default-features = false, features = ["csv"] }
 xlsxwriter = "0.5.0"
 postgres = "0.19.4"
