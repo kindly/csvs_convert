@@ -480,7 +480,7 @@ impl Describer {
         if string.len() > 1 && string.starts_with("0") {
             return false
         }
-        string.parse::<i128>().is_ok()
+        string.parse::<i64>().is_ok()
     }
 
     fn check_number(&mut self, string: &str) -> Option<f64> {

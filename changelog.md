@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.8.1] - 2023-03-30
+
+### Changed
+
+- Only detect i64 and lower integers as most systems do not allow higher.
+
 ## [0.8.0] - 2023-01-22
 
 ### New
