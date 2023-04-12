@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
-use xlsxwriter::Workbook;
+use xlsxwriter::{Format, Workbook};
 
 use arrow::error::ArrowError;
 
@@ -1567,7 +1567,8 @@ fn create_sheet(
     workbook: &mut Workbook,
     options: &Options,
 ) -> Result<(), Error> {
-    let bold = workbook.add_format().set_bold();
+    let mut cellformat = Format::new();
+    let bold = cellformat.set_bold();
 
     let mut field_types = vec![];
     if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
@@ -1613,7 +1614,7 @@ fn create_sheet(
     for (row_num, row) in csv_reader.into_records().enumerate() {
         let this_row = row.context(CSVSnafu { filename: &title })?;
 
-        let mut format = None;
+        let mut format: Option<&Format> = None;
 
         ensure!(
             row_num < 1048575,
