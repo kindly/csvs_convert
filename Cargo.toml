@@ -13,35 +13,35 @@ homepage = "https://github.com/kindly/csvs_convert"
 
 [dependencies]
 
-chrono = { version = "0.4.23", default-features = false }
-serde_json = { version = "1.0.91", features = ["preserve_order"] }
-csv = "1.1.6"
-snafu = "0.7.3"
-tempfile = "3.3.0"
-walkdir = "2.3.2"
+chrono = { version = "0.4.24", default-features = false }
+serde_json = { version = "1.0.95", features = ["preserve_order"] }
+csv = "1.2.1"
+snafu = "0.7.4"
+tempfile = "3.5.0"
+walkdir = "2.3.3"
 pathdiff = "0.2.1"
-petgraph = { version = "0.6.2", default-features = false, features= ["graphmap"] }
-typed-builder = "0.11.0"
+petgraph = { version = "0.6.3", default-features = false, features= ["graphmap"] }
+typed-builder = "0.14.0"
 lazy_static = "1.4.0"
-regex = {version = "1.7.0", default-features = false}
-thiserror = "1.0.38"
+regex = {version = "1.7.3", default-features = false}
+thiserror = "1.0.40"
 pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits", "fixedbitset"], default-features = false }
 streaming-stats = "0.2.3"
 counter = "0.5.7"
-crossbeam-channel = "0.5.6"
+crossbeam-channel = "0.5.8"
 csv-index = "0.1.6"
 threadpool = "1.8.1"
 log = "0.4.17"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 
-duckdb = { version = "0.7.0", features = ["bundled"] }
-arrow = { version = "29.0.0", default-features = false, features = ["csv"] }
+duckdb = { version = "0.7.1", features = ["bundled"] }
+arrow = { version = "37.0.0", default-features = false, features = ["csv"] }
 xlsxwriter = "0.6.0"
-postgres = "0.19.4"
-minijinja = { version = "0.27.0" }
-zip = { version = "0.6.3", default-features = false, features = ["deflate"] }
-rusqlite = { version = "0.28.0", features = ["bundled"] }
+postgres = "0.19.5"
+minijinja = { version = "0.31.0" }
+zip = { version = "0.6.4", default-features = false, features = ["deflate"] }
+rusqlite = { version = "0.29.0", features = ["bundled"] }
 
 [profile.bench]
 debug = true
