@@ -133,17 +133,17 @@ resources:
           type: integer
           format: integer
           stats:
-            min_len: 2
-            max_len: 2
-            min_str: "23"
-            max_str: "23"
-            min_number: 23
-            max_number: 23
+            min_len: 13
+            max_len: 13
+            min_str: "1010041430000"
+            max_str: "1010041430000"
+            min_number: 1010041430000
+            max_number: 1010041430000
             count: 2
             empty_count: 0
             estimate_unique: 1
-            sum: 46
-            mean: 23
+            sum: 2020082860000
+            mean: 1010041430000
     path: all_types.csv
     dialect:
       delimiter: ","

@@ -631,7 +631,7 @@ fn to_db_type(type_: String, format: String) -> String {
         "number" => "NUMERIC".to_string(),
         "object" => "JSONB".to_string(),
         "array" => "JSONB".to_string(),
-        "integer" => "INTEGER".to_string(),
+        "integer" => "BIGINT".to_string(),
         "boolean" => "BOOL".to_string(),
         _ => "TEXT".to_string(),
     }
