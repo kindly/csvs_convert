@@ -487,6 +487,10 @@ impl Describer {
         if string.len() > 1 && string.starts_with("0") && !string.starts_with("0.") {
             return None
         }
+        // floats this large loose precision
+        if string.len() > 17 {
+            return None
+        }
         string.parse().ok()
     }
 
