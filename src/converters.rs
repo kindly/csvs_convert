@@ -1246,9 +1246,9 @@ fn create_parquet(
             },
             ("datetime", f) => {
                 if PARQUET_ALLOWED_DEFAULT.contains(&f) {
-                    select_fields.push(format!("CAST(\"{name}\" AS TIMESTAMP)"));
+                    select_fields.push(format!("CAST(\"{name}\" AS TIMESTAMP) AS \"{name}\""));
                 } else if PARQUET_ALLOWED_FORMAT.contains(&f) {
-                    select_fields.push(format!("strptime(\"{name}\", '{f}')"));
+                    select_fields.push(format!("strptime(\"{name}\", '{f}') AS \"{name}\""));
                 } else {
                     select_fields.push(format!("\"{name}\""));
                 }
