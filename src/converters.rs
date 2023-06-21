@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use xlsxwriter::{Format, Workbook};
+use rand::distributions::{Alphanumeric, DistString};
 
 use arrow::error::ArrowError;
 
@@ -611,6 +612,10 @@ fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBui
     reader_builder
 }
 
+fn rand() -> String {
+    return Alphanumeric.sample_string(&mut rand::thread_rng(), 5);
+}
+
 fn to_db_type(type_: String, format: String) -> String {
     match type_.as_str() {
         "string" => "TEXT".to_string(),
@@ -717,10 +722,10 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
     {% if schema.foreignKeys is sequence %}
         {% for foreignKey in schema.foreignKeys %}
             {% if foreignKey.fields is string %}
-              CREATE INDEX "idx_{{title|default(name)}}_{{foreignKey.fields}}" ON "{{title|default(name)}}" ("{{foreignKey.fields}}"); #nl
+              CREATE INDEX "idx_{{rand()}}_{{foreignKey.fields}}" ON "{{title|default(name)}}" ("{{foreignKey.fields}}"); #nl
             {% endif %}
             {% if foreignKey.fields is sequence %}
-              CREATE INDEX "idx_{{title|default(name)}}_{{foreignKey.fields | join("_")}}" ON "{{title|default(name)}}" ("{{foreignKey.fields | join('","')}}"); #nl
+              CREATE INDEX "idx_{{rand()}}_{{foreignKey.fields | join("_")}}" ON "{{title|default(name)}}" ("{{foreignKey.fields | join('","')}}"); #nl
             {% endif %}
         {% endfor %}
     {% endif %}
@@ -732,6 +737,7 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
 
     let mut env = Environment::new();
     env.add_function("to_db_type", to_db_type);
+    env.add_function("rand", rand);
     env.add_filter("clean_field", clean_field);
     env.add_template("postgres_resource", &postgres_table)
         .unwrap();

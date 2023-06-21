@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.8.5"
+version = "0.8.6"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -42,6 +42,7 @@ postgres = "0.19.5"
 minijinja = { version = "0.31.0" }
 zip = { version = "0.6.4", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.29.0", features = ["bundled"] }
+rand = "0.8.5"
 
 [profile.bench]
 debug = true
