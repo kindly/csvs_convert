@@ -4,6 +4,8 @@ use csv::Writer;
 use minijinja::Environment;
 use postgres::{Client, NoTls};
 use rusqlite::Connection;
+
+#[cfg(feature = "parquet")]
 use duckdb::Connection as DuckdbConnection;
 use serde_json::{Value, json};
 use snafu::prelude::*;
@@ -19,7 +21,6 @@ use typed_builder::TypedBuilder;
 use xlsxwriter::{Format, Workbook};
 use rand::distributions::{Alphanumeric, DistString};
 
-use arrow::error::ArrowError;
 
 #[non_exhaustive]
 #[derive(Debug, Snafu)]
@@ -75,9 +76,6 @@ pub enum Error {
     #[snafu(display("{}", source))]
     JinjaError { source: minijinja::Error },
 
-    #[snafu(display("{}", source))]
-    ArrowError { source: ArrowError },
-
     #[snafu(display("Postgres Error: {}", source))]
     PostgresError { source: postgres::Error },
 
@@ -99,6 +97,7 @@ pub enum Error {
     #[snafu(display("{}", source))]
     DescribeError { source: describe::DescribeError },
 
+    #[cfg(feature = "parquet")]
     #[snafu(display("{}", source))]
     DuckDbError { source: duckdb::Error },
 }
@@ -1186,6 +1185,7 @@ fn get_table_info(
     Ok((table_to_schema, tables))
 }
 
+#[cfg(feature = "parquet")]
 fn create_parquet(
     file: PathBuf,
     resource: Value,
@@ -1307,6 +1307,7 @@ fn create_parquet(
 }
 
 
+#[cfg(feature = "parquet")]
 fn create_parquet_auto(
     file: PathBuf,
     mut output_path: PathBuf,
@@ -1416,6 +1417,7 @@ fn create_parquet_auto(
     Ok(resource)
 }
 
+#[cfg(feature = "parquet")]
 pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
@@ -1430,6 +1432,7 @@ pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value,
     Ok(datapackage)
 }
 
+#[cfg(feature = "parquet")]
 pub fn csvs_to_parquet_with_options(
     output_path: String,
     csvs: Vec<PathBuf>,
@@ -1462,6 +1465,7 @@ pub fn csvs_to_parquet_with_options(
     Ok(datapackage)
 }
 
+#[cfg(feature = "parquet")]
 fn stream_csvs_to_parquet(
     output_path: String,
     csvs: Vec<PathBuf>,
@@ -1482,11 +1486,13 @@ fn stream_csvs_to_parquet(
     Ok(datapackage)
 }
 
+#[cfg(feature = "parquet")]
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
     let options = Options::builder().build();
     datapackage_to_parquet_with_options(output_path, datapackage, options)
 }
 
+#[cfg(feature = "parquet")]
 pub fn datapackage_to_parquet_with_options(
     output_path: PathBuf,
     datapackage: String,

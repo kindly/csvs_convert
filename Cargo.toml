@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.8.6"
+version = "0.8.7"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -23,7 +23,7 @@ pathdiff = "0.2.1"
 petgraph = { version = "0.6.3", default-features = false, features= ["graphmap"] }
 typed-builder = "0.14.0"
 lazy_static = "1.4.0"
-regex = {version = "1.7.3", default-features = false}
+regex = {version = "1.7.3"}
 thiserror = "1.0.40"
 pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits", "fixedbitset"], default-features = false }
 streaming-stats = "0.2.3"
@@ -34,9 +34,7 @@ threadpool = "1.8.1"
 log = "0.4.17"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-
-duckdb = { version = "0.7.1", features = ["bundled"] }
-arrow = { version = "37.0.0", default-features = false, features = ["csv"] }
+duckdb = { version = "0.7.1", features = ["bundled"], optional = true }
 xlsxwriter = "0.6.0"
 postgres = "0.19.5"
 minijinja = { version = "0.31.0" }
@@ -50,3 +48,8 @@ debug = true
 [dev-dependencies]
 assert-json-diff = "2.0.2"
 insta = { version = "1.23.0", features = ["redactions", "yaml"] }
+
+[features]
+default = ["parquet", "converters"]
+parquet = ["duckdb"]
+converters = []

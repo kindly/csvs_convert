@@ -19,14 +19,17 @@
 //! * Whole file needs to be on disk as whole CSV is analyzed therefore files are read twice.
 
 #[cfg(not(target_family = "wasm"))]
+#[cfg(feature = "converters")]
 mod converters;
 
 mod describe;
 mod describe_csv;
 mod describer;
+#[cfg(feature = "parquet")]
 mod query;
 
 #[cfg(not(target_family = "wasm"))]
+#[cfg(feature = "converters")]
 mod zip_dir;
 
 pub use describe::{
@@ -34,16 +37,24 @@ pub use describe::{
 };
 pub use describer::{Describer, Options as DescriberOptions};
 
+#[cfg(feature = "converters")]
 #[cfg(not(target_family = "wasm"))]
 pub use converters::{
-    csvs_to_parquet, csvs_to_parquet_with_options, csvs_to_postgres, csvs_to_postgres_with_options,
+    csvs_to_postgres, csvs_to_postgres_with_options,
     csvs_to_sqlite, csvs_to_sqlite_with_options, csvs_to_xlsx, csvs_to_xlsx_with_options,
-    datapackage_to_parquet, datapackage_to_parquet_with_options, datapackage_to_postgres,
+    datapackage_to_postgres,
     datapackage_to_postgres_with_options, datapackage_to_sqlite,
     datapackage_to_sqlite_with_options, datapackage_to_xlsx, datapackage_to_xlsx_with_options,
     merge_datapackage, merge_datapackage_jsons, merge_datapackage_with_options,
     Error, Options
 };
+
+#[cfg(feature = "parquet")]
+pub use converters::{
+    csvs_to_parquet, csvs_to_parquet_with_options, 
+    datapackage_to_parquet, datapackage_to_parquet_with_options};
+
+#[cfg(feature = "parquet")]
 #[cfg(not(target_family = "wasm"))]
 pub use query::{
     query, Error as QueryError
