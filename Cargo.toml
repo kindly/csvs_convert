@@ -13,32 +13,32 @@ homepage = "https://github.com/kindly/csvs_convert"
 
 [dependencies]
 
-chrono = { version = "0.4.24", default-features = false }
-serde_json = { version = "1.0.95", features = ["preserve_order"] }
-csv = "1.2.1"
-snafu = "0.7.4"
-tempfile = "3.5.0"
-walkdir = "2.3.3"
+chrono = { version = "0.4.31", default-features = false }
+serde_json = { version = "1.0.107", features = ["preserve_order"] }
+csv = "1.2.2"
+snafu = "0.7.5"
+tempfile = "3.8.0"
+walkdir = "2.4.0"
 pathdiff = "0.2.1"
-petgraph = { version = "0.6.3", default-features = false, features= ["graphmap"] }
+petgraph = { version = "0.6.4", default-features = false, features= ["graphmap"] }
 typed-builder = "0.16.2"
 lazy_static = "1.4.0"
-regex = {version = "1.7.3"}
-thiserror = "1.0.40"
+regex = {version = "1.9.6"}
+thiserror = "1.0.49"
 pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits", "fixedbitset"], default-features = false }
 streaming-stats = "0.2.3"
 counter = "0.5.7"
 crossbeam-channel = "0.5.8"
 csv-index = "0.1.6"
 threadpool = "1.8.1"
-log = "0.4.17"
+log = "0.4.20"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 duckdb = { version = "0.9.0", features = ["bundled"], optional = true }
 xlsxwriter = "0.6.0"
-postgres = "0.19.5"
+postgres = "0.19.7"
 minijinja = { version = "1.0.8" }
-zip = { version = "0.6.4", default-features = false, features = ["deflate"] }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.29.0", features = ["bundled"] }
 rand = "0.8.5"
 
@@ -47,7 +47,7 @@ debug = true
 
 [dev-dependencies]
 assert-json-diff = "2.0.2"
-insta = { version = "1.23.0", features = ["redactions", "yaml"] }
+insta = { version = "1.33.0", features = ["redactions", "yaml"] }
 
 [features]
 default = ["parquet", "converters"]

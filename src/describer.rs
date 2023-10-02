@@ -513,7 +513,7 @@ impl Describer {
     }
 
     fn check_datetime(&mut self, string: &str, format: &str) -> bool {
-        chrono::Utc.datetime_from_str(string, format).is_ok()
+        NaiveDateTime::parse_from_str(string, format).is_ok()
     }
 
     fn check_date(&mut self, string: &str, format: &str) -> bool {
