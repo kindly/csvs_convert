@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.8.7"
+version = "0.8.8"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -21,7 +21,7 @@ tempfile = "3.5.0"
 walkdir = "2.3.3"
 pathdiff = "0.2.1"
 petgraph = { version = "0.6.3", default-features = false, features= ["graphmap"] }
-typed-builder = "0.14.0"
+typed-builder = "0.16.2"
 lazy_static = "1.4.0"
 regex = {version = "1.7.3"}
 thiserror = "1.0.40"
@@ -34,10 +34,10 @@ threadpool = "1.8.1"
 log = "0.4.17"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-duckdb = { version = "0.7.1", features = ["bundled"], optional = true }
+duckdb = { version = "0.9.0", features = ["bundled"], optional = true }
 xlsxwriter = "0.6.0"
 postgres = "0.19.5"
-minijinja = { version = "0.31.0" }
+minijinja = { version = "1.0.8" }
 zip = { version = "0.6.4", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.29.0", features = ["bundled"] }
 rand = "0.8.5"

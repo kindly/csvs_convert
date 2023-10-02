@@ -1368,13 +1368,14 @@ fn create_parquet_auto(
 
     while let Some(row) = rows.next().unwrap() {
         let mut field_type = "string";
-        let row_type: String = row.get(1).unwrap();
-        let converted_type: String = row.get(2).unwrap();
         let name: String = row.get(0).unwrap();
-
         if name == "duckdb_schema" {
             continue
         }
+
+        let row_type: String = row.get(1).unwrap();
+        let converted_type: String = row.get(2).unwrap();
+
 
         if &row_type == "BOOLEAN" {
             field_type = "boolean";

@@ -93,7 +93,6 @@ fn datetime_tz_formats() -> Vec<&'static str> {
     vec![
         //"%Y-%m-%d %H:%M:%S%#z",
         "%Y-%m-%d %H:%M%#z",
-        "%Y-%m-%d %H:%M:%S%.f%:z",
         "%Y-%m-%d %H:%M:%S%.fZ",
         "%Y-%m-%d %H:%M:%S %Z",
         "%Y-%m-%d %H:%M:%S.%f %Z",

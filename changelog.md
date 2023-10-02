@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.8.8] - 2023-07-30
+
+### Changed
+
+- Upgrade deps. Duckdb now compiles faster with less memory!
+
+## [0.8.7] - 2023-07-30
+
+### New
+
+- Make duckdb optional
+
+## [0.8.6] - 2023-06-21
+
+### Fixed
+
+- Make postgres index names shorter
+
+## [0.8.5] - 2023-06-07
+
+### Fixed
+
+- Parquet field names incorrect
+
 ## [0.8.4] - 2023-05-26
 
 ### Changed

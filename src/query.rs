@@ -119,7 +119,7 @@ mod tests {
         let output: String = tmp.join("output.parquet").to_string_lossy().into();
 
         query(
-            "select * from 'https://csvs-convert-test.s3.eu-west-1.amazonaws.com/games.parquet' where id=1".into(),
+            "select * from 'https://csvs-convert-test.s3.eu-west-1.amazonaws.com/output.parquet'".into(),
             output.clone(),
             Options::builder().parquet(true).build()
         ).unwrap();

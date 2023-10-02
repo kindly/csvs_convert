@@ -4,11 +4,27 @@ expression: data
 ---
 [
     [
-        Int(
-            1,
+        Text(
+            "a",
         ),
         Text(
-            "game1_add_resource",
+            "b",
+        ),
+    ],
+    [
+        Text(
+            "aa",
+        ),
+        Text(
+            "bb",
+        ),
+    ],
+    [
+        Text(
+            "aaa",
+        ),
+        Text(
+            "bbb",
         ),
     ],
 ]
