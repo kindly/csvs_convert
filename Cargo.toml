@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.8.8"
+version = "0.8.9"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -20,12 +20,19 @@ snafu = "0.7.5"
 tempfile = "3.8.0"
 walkdir = "2.4.0"
 pathdiff = "0.2.1"
-petgraph = { version = "0.6.4", default-features = false, features= ["graphmap"] }
+petgraph = { version = "0.6.4", default-features = false, features = [
+  "graphmap",
+] }
 typed-builder = "0.16.2"
 lazy_static = "1.4.0"
-regex = {version = "1.9.6"}
+regex = { version = "1.9.6" }
 thiserror = "1.0.49"
-pdatastructs = { version = "0.7.0", features = ["rand", "bytecount", "num-traits", "fixedbitset"], default-features = false }
+pdatastructs = { version = "0.7.0", features = [
+  "rand",
+  "bytecount",
+  "num-traits",
+  "fixedbitset",
+], default-features = false }
 streaming-stats = "0.2.3"
 counter = "0.5.7"
 crossbeam-channel = "0.5.8"

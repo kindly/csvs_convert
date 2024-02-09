@@ -1669,7 +1669,11 @@ fn create_sheet(
 
             if cell.len() > 32767 {
                 log::warn!("WARNING: Cell larger than 32767 chararcters which is too large for XLSX format. The cell will be truncated, so some data will be missing.");
-                cell.truncate(32767)
+                let mut index: usize = 32767;
+                while !cell.is_char_boundary(index) {
+                    index -= 1;
+                }
+                cell.truncate(index)
             }
 
             worksheet
