@@ -1651,14 +1651,18 @@ fn create_sheet(
 
             if ["number", "integer"].contains(&field_types[col_index].as_str()) {
                 if let Ok(number) = value.parse::<f64>() {
-                    worksheet
-                        .write_number(
-                            row_num.try_into().unwrap(),
-                            col_index.try_into().unwrap(),
-                            number,
-                            format,
-                        )
-                        .context(XLSXSnafu {})?;
+                    if number.is_finite() {
+                        worksheet
+                            .write_number(
+                                row_num.try_into().unwrap(),
+                                col_index.try_into().unwrap(),
+                                number,
+                                format,
+                            )
+                            .context(XLSXSnafu {})?;
+                    } else {
+                        log::warn!("Skipping number \"{number}\" as it is not allowed in XLSX format");
+                    }
                     continue;
                 }
             }
