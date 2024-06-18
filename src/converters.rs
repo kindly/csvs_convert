@@ -102,7 +102,7 @@ pub enum Error {
     DuckDbError { source: duckdb::Error },
 }
 
-#[derive(Default, Debug, TypedBuilder)]
+#[derive(Default, Debug, TypedBuilder, Clone)]
 pub struct Options {
     #[builder(default)]
     pub delete_input_csv: bool,
@@ -137,7 +137,9 @@ pub struct Options {
     #[builder(default)]
     pub dump_file: String,
     #[builder(default)]
-    pub pipe: bool
+    pub pipe: bool,
+    #[builder(default)]
+    pub truncate: bool,
 }
 
 lazy_static::lazy_static! {
@@ -632,6 +634,13 @@ fn to_db_type(type_: String, format: String) -> String {
                 "TEXT".into()
             }
         }
+        "datetime_tz" => {
+            if POSTGRES_ALLOWED_DATE_FORMATS.contains(&format.as_str()) || format.is_empty() {
+                "TIMESTAMP".to_string()
+            } else {
+                "TEXT".into()
+            }
+        }
         "number" => "NUMERIC".to_string(),
         "object" => "JSONB".to_string(),
         "array" => "JSONB".to_string(),
@@ -747,8 +756,9 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
 lazy_static::lazy_static! {
     pub static ref POSTGRES_ALLOWED_DATE_FORMATS: Vec<&'static str> =
     vec!(
-        "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S.%f",
         "%Y-%m-%d %I:%M:%S %P",
         "%Y-%m-%d %I:%M %P",
@@ -1005,7 +1015,7 @@ pub fn datapackage_to_sqlite_with_options(
 
         let mut existing_columns: HashMap<String, String> = HashMap::new();
 
-        if options.drop || options.evolve {
+        if options.drop || options.evolve || options.truncate {
             if let Some(conn) = conn.as_mut() {
                 let mut fields_query = conn
                     .prepare("select name, type from pragma_table_info(?)")
@@ -1030,6 +1040,16 @@ pub fn datapackage_to_sqlite_with_options(
                     );
                 }
             };
+        }
+
+        if !existing_columns.is_empty() && options.truncate {
+            if let Some(conn) = conn.as_mut() {
+                conn.execute(&format!("DELETE FROM [{table}];"), [])
+                    .context(RusqliteSnafu {
+                        message: "Error making sqlite tables: ",
+                    })?;
+                }
+
         }
 
         let mut create = false;
@@ -1933,6 +1953,14 @@ set search_path = "{schema}";
             }
         }
 
+        if options.truncate && !create {
+            if let Some(client) = client.as_mut() {
+                client
+                    .batch_execute(&format!("TRUNCATE TABLE {schema_table} CASCADE;"))
+                    .context(PostgresSnafu {})?;
+            }
+        }
+
         if drop && !create {
             create = true;
             let mut drop_statement = String::new();
@@ -2695,12 +2723,45 @@ mod tests {
             .unwrap();
     }
 
+    // #[test]
+    // fn test_postgres_types() {
+    //     let options = Options::builder()
+    //         .drop(true)
+    //         .schema("types".into())
+    //         .build();
+
+    //     csvs_to_postgres_with_options("postgresql://test@localhost/test".into(), vec!["src/fixtures/date.csv".into()], options).unwrap();
+    // }
+
+
     #[test]
     fn test_drop_postgres() {
         let options = Options::builder()
             .drop(true)
             .schema("test_drop2".into())
             .build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/large".into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_truncate_postgres() {
+        let options = Options::builder()
+            .truncate(true)
+            .schema("test_truncate".into())
+            .build();
+
+        datapackage_to_postgres_with_options(
+            "postgresql://test@localhost/test".into(),
+            "fixtures/large".into(),
+            options.clone(),
+        )
+        .unwrap();
 
         datapackage_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
@@ -2816,6 +2877,25 @@ mod tests {
         .unwrap();
 
         let options = Options::builder().drop(true).build();
+        datapackage_to_sqlite_with_options(
+            "/tmp/sqlite.db".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_truncate_sqlite() {
+        let options = Options::builder().truncate(true).build();
+        datapackage_to_sqlite_with_options(
+            "/tmp/sqlite.db".into(),
+            "fixtures/evolve/base".into(),
+            options,
+        )
+        .unwrap();
+
+        let options = Options::builder().truncate(true).build();
         datapackage_to_sqlite_with_options(
             "/tmp/sqlite.db".into(),
             "fixtures/evolve/base".into(),
