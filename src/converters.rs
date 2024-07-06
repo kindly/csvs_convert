@@ -1252,7 +1252,11 @@ fn create_parquet(
             }
         );
 
-        let name = field["name"].as_str().unwrap();
+        let name = match field["title"].as_str() {
+            Some(title) => title.to_owned(),
+            None => field["name"].as_str().unwrap().to_owned(),
+        };
+
         let field_type = field["type"].as_str().unwrap();
 
         let format_type = field["format"].as_str().unwrap_or("_");
