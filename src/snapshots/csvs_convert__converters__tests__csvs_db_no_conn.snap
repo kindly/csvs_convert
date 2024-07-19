@@ -13,7 +13,7 @@ expression: lines
 - " , \"integer\" BIGINT "
 - "); "
 - ""
-- "\\copy \"all_types_semi_colon\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/projects/datapackage_convert/src/fixtures/all_types_semi_colon.csv' WITH CSV HEADER QUOTE '\"' DELIMITER ';'"
+- "\\copy \"all_types_semi_colon\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/home/david/projects/datapackage_convert/src/fixtures/all_types_semi_colon.csv' WITH CSV HEADER QUOTE '\"' DELIMITER ';'"
 - "CREATE TABLE IF NOT EXISTS \"all_types\" ( \"string\" TEXT "
 - " , \"array\" JSONB "
 - " , \"object\" JSONB "
@@ -25,5 +25,4 @@ expression: lines
 - " , \"integer\" BIGINT "
 - "); "
 - ""
-- "\\copy \"all_types\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/projects/datapackage_convert/src/fixtures/all_types.csv' WITH CSV HEADER QUOTE '\"' DELIMITER ','"
-
+- "\\copy \"all_types\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/home/david/projects/datapackage_convert/src/fixtures/all_types.csv' WITH CSV HEADER QUOTE '\"' DELIMITER ','"

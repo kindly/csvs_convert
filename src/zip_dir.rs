@@ -1,7 +1,7 @@
 use std::io::{Seek, Write};
 use std::iter::Iterator;
 use zip::result::ZipError;
-use zip::write::FileOptions;
+use zip::write::{FileOptions, SimpleFileOptions};
 
 use std::fs::File;
 use std::path::Path;
@@ -16,7 +16,7 @@ where
     T: Write + Seek,
 {
     let mut zip = zip::ZipWriter::new(writer);
-    let options = FileOptions::default()
+    let options: SimpleFileOptions = FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o755);
 
