@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.8.14"
+version = "0.9.0"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -42,12 +42,12 @@ log = "0.4.20"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 duckdb = { version = "1.0.0", features = ["bundled"], optional = true }
-xlsxwriter = "0.6.1"
 postgres = "0.19.8"
 minijinja = { version = "2.2.0" }
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 rand = "0.8.5"
+rust_xlsxwriter = { version = "0.79.0", features = ["constant_memory"] }
 
 [profile.bench]
 debug = true

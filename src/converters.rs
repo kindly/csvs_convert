@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
-use xlsxwriter::{Format, Workbook};
+use rust_xlsxwriter::{Format, Workbook};
 use rand::distributions::{Alphanumeric, DistString};
 
 
@@ -80,7 +80,7 @@ pub enum Error {
     PostgresError { source: postgres::Error },
 
     #[snafu(display("Error with writing XLSX file"))]
-    XLSXError { source: xlsxwriter::XlsxError },
+    XLSXError { source: rust_xlsxwriter::XlsxError },
 
     #[snafu(display("Environment variable {} does not exist.", envvar))]
     EnvVarError {
@@ -1604,8 +1604,9 @@ fn create_sheet(
     workbook: &mut Workbook,
     options: &Options,
 ) -> Result<(), Error> {
-    let mut cellformat = Format::new();
-    let bold = cellformat.set_bold();
+    let bold_format = Format::new().set_bold();
+
+    let base_format = Format::new();
 
     let mut field_types = vec![];
     if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
@@ -1644,14 +1645,14 @@ fn create_sheet(
 
     let new_title = truncate_xlsx_title(title.clone(), &options.seperator);
 
-    let mut worksheet = workbook
-        .add_worksheet(Some(&new_title))
-        .context(XLSXSnafu {})?;
+    let worksheet = workbook.add_worksheet_with_low_memory();
+    worksheet.set_name(&new_title).context(XLSXSnafu {})?;
+
 
     for (row_num, row) in csv_reader.into_records().enumerate() {
         let this_row = row.context(CSVSnafu { filename: &title })?;
 
-        let mut format: Option<&Format> = None;
+        let mut format = &base_format;
 
         ensure!(
             row_num < 1048575,
@@ -1667,7 +1668,7 @@ fn create_sheet(
                     message: "Number of fields in datapackage needs to match CSV fields."
                 }
             );
-            format = Some(&bold);
+            format = &bold_format;
         }
 
         for (col_index, value) in this_row.iter().enumerate() {
@@ -1681,7 +1682,6 @@ fn create_sheet(
                                 row_num.try_into().unwrap(),
                                 col_index.try_into().unwrap(),
                                 number,
-                                format,
                             )
                             .context(XLSXSnafu {})?;
                     } else {
@@ -1705,7 +1705,7 @@ fn create_sheet(
             }
 
             worksheet
-                .write_string(
+                .write_with_format(
                     row_num.try_into().expect("already tested length of string"),
                     col_index.try_into().expect("already checked field count"),
                     &cell,
@@ -1781,9 +1781,7 @@ pub fn datapackage_to_xlsx_with_options(
     let mut pathbuf = PathBuf::from(&xlsx_path);
     pathbuf.pop();
 
-    let mut workbook =
-        Workbook::new_with_options(&xlsx_path, true, Some(&pathbuf.to_string_lossy()), false)
-            .context(XLSXSnafu {})?;
+    let mut workbook = Workbook::new();
 
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
@@ -1808,6 +1806,8 @@ pub fn datapackage_to_xlsx_with_options(
         }
         create_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
     }
+
+    workbook.save(&xlsx_path).context(XLSXSnafu {})?;
 
     Ok(())
 }
@@ -2634,7 +2634,7 @@ mod tests {
 
     #[test]
     fn test_csvs_db() {
-        let options = Options::builder().drop(true).dump_file("-".into()).schema("test".into()).build();
+        let options = Options::builder().drop(true).schema("test".into()).build();
 
         csvs_to_postgres_with_options(
             "postgresql://test@localhost/test".into(),
