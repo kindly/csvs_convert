@@ -24,7 +24,7 @@ where
         let path = entry.path();
         let name = path
             .strip_prefix(Path::new(prefix))
-            .map_err(|_| zip::result::ZipError::InvalidArchive("Could not strip prefix"))?;
+            .map_err(|_| zip::result::ZipError::InvalidArchive("Could not strip prefix".into()))?;
 
         if path.is_file() {
             zip.start_file(name.to_string_lossy(), options)?;
