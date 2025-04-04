@@ -1633,6 +1633,7 @@ pub fn datapackage_to_xlsx_with_options(
     pathbuf.pop();
 
     let mut workbook = Workbook::new();
+    workbook.set_tempdir(pathbuf).context(XLSXSnafu {})?;
 
     for resource in resources_option.unwrap() {
         let resource_path = resource["path"].as_str().unwrap();
@@ -1997,7 +1998,6 @@ fn get_column_changes(
 mod tests {
     use super::*;
 
-    use insta::{assert_yaml_snapshot, assert_debug_snapshot};
     use rusqlite::types::ValueRef;
     use std::io::BufRead;
     use parquet::file::reader::SerializedFileReader;

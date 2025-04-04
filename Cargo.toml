@@ -44,14 +44,12 @@ parquet = { version = "=54.2.1", default-features = false, features = ["arrow", 
 arrow = { version = "=54.2.1", default-features = false, features = ["csv"], optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-duckdb = { version = "=1.2.0", features = ["bundled"], optional = true }
-libduckdb-sys = { version = "=1.2.0", features = ["bundled"], optional = true }
 postgres = "0.19.8"
 minijinja = { version = "2.2.0" }
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 rand = "0.8.5"
-rust_xlsxwriter = { version = "0.84.2", features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.85.0", features = ["constant_memory"] }
 
 [profile.bench]
 debug = true
@@ -61,7 +59,6 @@ assert-json-diff = "2.0.2"
 insta = { version = "1.39.0", features = ["redactions", "yaml"] }
 
 [features]
-default = ["parquet", "converters", "arrow_parquet"]
-parquet = ["dep:duckdb", "libduckdb-sys"]
-arrow_parquet = ["dep:parquet", "dep:arrow"]
+default = ["parquet", "converters"]
+parquet = ["dep:parquet", "dep:arrow"]
 converters = []
