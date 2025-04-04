@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -40,8 +40,12 @@ csv-index = "0.1.6"
 threadpool = "1.8.1"
 log = "0.4.20"
 
+parquet = { version = "=54.2.1", default-features = false, features = ["arrow", "snap"], optional = true }
+arrow = { version = "=54.2.1", default-features = false, features = ["csv"], optional = true }
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-duckdb = { version = "1.0.0", features = ["bundled"], optional = true }
+duckdb = { version = "=1.2.0", features = ["bundled"], optional = true }
+libduckdb-sys = { version = "=1.2.0", features = ["bundled"], optional = true }
 postgres = "0.19.8"
 minijinja = { version = "2.2.0" }
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
@@ -57,6 +61,7 @@ assert-json-diff = "2.0.2"
 insta = { version = "1.39.0", features = ["redactions", "yaml"] }
 
 [features]
-default = ["parquet", "converters"]
-parquet = ["duckdb"]
+default = ["parquet", "converters", "arrow_parquet"]
+parquet = ["dep:duckdb", "libduckdb-sys"]
+arrow_parquet = ["dep:parquet", "dep:arrow"]
 converters = []

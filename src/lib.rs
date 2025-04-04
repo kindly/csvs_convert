@@ -25,8 +25,6 @@ mod converters;
 mod describe;
 mod describe_csv;
 mod describer;
-#[cfg(feature = "parquet")]
-mod query;
 
 #[cfg(not(target_family = "wasm"))]
 #[cfg(feature = "converters")]
@@ -54,8 +52,3 @@ pub use converters::{
     csvs_to_parquet, csvs_to_parquet_with_options, 
     datapackage_to_parquet, datapackage_to_parquet_with_options};
 
-#[cfg(feature = "parquet")]
-#[cfg(not(target_family = "wasm"))]
-pub use query::{
-    query, Error as QueryError
-};

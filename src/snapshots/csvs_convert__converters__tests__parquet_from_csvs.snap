@@ -1,22 +1,13 @@
 ---
 source: src/converters.rs
-expression: results
+expression: data
+snapshot_kind: text
 ---
-[
-    [
-        BigInt(
-            1,
-        ),
-        Text(
-            "game1_add_resource",
-        ),
-    ],
-    [
-        BigInt(
-            2,
-        ),
-        Text(
-            "game2_add_resource",
-        ),
-    ],
-]
+- - id
+  - "1"
+- - title
+  - game1_add_resource
+- - id
+  - "2"
+- - title
+  - game2_add_resource

@@ -5,8 +5,6 @@ use minijinja::Environment;
 use postgres::{Client, NoTls};
 use rusqlite::Connection;
 
-#[cfg(feature = "parquet")]
-use duckdb::Connection as DuckdbConnection;
 use serde_json::{Value, json};
 use snafu::prelude::*;
 use snafu::{ensure, Snafu};
@@ -20,6 +18,18 @@ use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use rust_xlsxwriter::{Format, Workbook};
 use rand::distributions::{Alphanumeric, DistString};
+
+#[cfg(feature = "parquet")]
+use arrow::csv::ReaderBuilder as ArrowReaderBuilder;
+#[cfg(feature = "parquet")]
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+#[cfg(feature = "parquet")]
+use arrow::error::ArrowError;
+#[cfg(feature = "parquet")]
+use parquet::{
+    arrow::ArrowWriter, basic::Compression, errors::ParquetError,
+    file::properties::WriterProperties,
+};
 
 
 #[non_exhaustive]
@@ -99,7 +109,11 @@ pub enum Error {
 
     #[cfg(feature = "parquet")]
     #[snafu(display("{}", source))]
-    DuckDbError { source: duckdb::Error },
+    ParquetError { source: ParquetError },
+
+    #[cfg(feature = "parquet")]
+    #[snafu(display("{}", source))]
+    ArrowError { source: ArrowError },
 }
 
 #[derive(Default, Debug, TypedBuilder, Clone)]
@@ -812,6 +826,7 @@ lazy_static::lazy_static! {
         "%Y.%m.%d",
         "%y%m%d %H:%M:%S");
 
+
     pub static ref PARQUET_ALLOWED_DEFAULT: Vec<&'static str> =
     vec!(
         "rfc3339",
@@ -822,44 +837,45 @@ lazy_static::lazy_static! {
         "%Y-%m-%d %H:%M:%S"
         );
 
-    pub static ref PARQUET_ALLOWED_FORMAT: Vec<&'static str> =
-    vec!(
-        //"%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d %I:%M:%S %p",
-        "%Y-%m-%d %I:%M %p",
-        "%Y %b %d %H:%M:%S",
-        "%B %d %Y %H:%M:%S",
-        "%B %d %Y %I:%M:%S %p",
-        "%B %d %Y %I:%M %p",
-        "%Y %b %d at %I:%M %p",
-        "%d %B %Y %H:%M:%p",
-        "%d %B %Y %H:%M",
-        "%d %B %Y %I:%M:%S %p",
-        "%d %B %Y %I:%M %p",
-        "%B %d %Y %H:%M",
-        "%m/%d/%y %H:%M:%S",
-        "%m/%d/%y %H:%M",
-        "%m/%d/%y %I:%M:%S %p",
-        "%m/%d/%y %I:%M %p",
-        "%m/%d/%Y %H:%M:%S",
-        "%m/%d/%Y %H:%M",
-        "%m/%d/%Y %I:%M:%S %p",
-        "%m/%d/%Y %I:%M %p",
-        "%d/%m/%y %H:%M:%S",
-        "%d/%m/%y %H:%M",
-        "%d/%m/%y %I:%M:%S %p",
-        "%d/%m/%y %I:%M %p",
-        "%d/%m/%Y %H:%M:%S",
-        "%d/%m/%Y %H:%M",
-        "%d/%m/%Y %I:%M:%S %p",
-        "%d/%m/%Y %I:%M %p",
-        "%Y/%m/%d %H:%M:%S",
-        "%Y/%m/%d %H:%M",
-        "%Y/%m/%d %I:%M:%S %p",
-        "%Y/%m/%d %I:%M %p",
-        "%y%m%d %H:%M:%S",
-    );
+
+    // pub static ref PARQUET_ALLOWED_FORMAT: Vec<&'static str> =
+    // vec!(
+    //     //"%Y-%m-%d %H:%M:%S",
+    //     "%Y-%m-%d %H:%M",
+    //     "%Y-%m-%d %I:%M:%S %p",
+    //     "%Y-%m-%d %I:%M %p",
+    //     "%Y %b %d %H:%M:%S",
+    //     "%B %d %Y %H:%M:%S",
+    //     "%B %d %Y %I:%M:%S %p",
+    //     "%B %d %Y %I:%M %p",
+    //     "%Y %b %d at %I:%M %p",
+    //     "%d %B %Y %H:%M:%p",
+    //     "%d %B %Y %H:%M",
+    //     "%d %B %Y %I:%M:%S %p",
+    //     "%d %B %Y %I:%M %p",
+    //     "%B %d %Y %H:%M",
+    //     "%m/%d/%y %H:%M:%S",
+    //     "%m/%d/%y %H:%M",
+    //     "%m/%d/%y %I:%M:%S %p",
+    //     "%m/%d/%y %I:%M %p",
+    //     "%m/%d/%Y %H:%M:%S",
+    //     "%m/%d/%Y %H:%M",
+    //     "%m/%d/%Y %I:%M:%S %p",
+    //     "%m/%d/%Y %I:%M %p",
+    //     "%d/%m/%y %H:%M:%S",
+    //     "%d/%m/%y %H:%M",
+    //     "%d/%m/%y %I:%M:%S %p",
+    //     "%d/%m/%y %I:%M %p",
+    //     "%d/%m/%Y %H:%M:%S",
+    //     "%d/%m/%Y %H:%M",
+    //     "%d/%m/%Y %I:%M:%S %p",
+    //     "%d/%m/%Y %I:%M %p",
+    //     "%Y/%m/%d %H:%M:%S",
+    //     "%Y/%m/%d %H:%M",
+    //     "%Y/%m/%d %I:%M:%S %p",
+    //     "%Y/%m/%d %I:%M %p",
+    //     "%y%m%d %H:%M:%S",
+    // );
 
 }
 
@@ -1205,7 +1221,7 @@ fn get_table_info(
     Ok((table_to_schema, tables))
 }
 
-#[cfg(feature = "parquet")]
+
 fn create_parquet(
     file: PathBuf,
     resource: Value,
@@ -1221,8 +1237,7 @@ fn create_parquet(
 
     output_path.push(format!("{}.parquet", resource["name"].as_str().unwrap()));
 
-    let mut select_fields = vec![];
-    let mut type_fields = vec![];
+    let mut arrow_fields = vec![];
 
     ensure!(
         resource["schema"]["fields"].is_array(),
@@ -1252,197 +1267,66 @@ fn create_parquet(
             }
         );
 
-        let name = match field["title"].as_str() {
-            Some(title) => title.to_owned(),
-            None => field["name"].as_str().unwrap().to_owned(),
-        };
-
+        let name = field["name"].as_str().unwrap();
         let field_type = field["type"].as_str().unwrap();
 
         let format_type = field["format"].as_str().unwrap_or("_");
 
-        match (field_type, format_type) {
-            ("number", _) => {
-                select_fields.push(format!("\"{name}\""));
-                type_fields.push(format!("\"{name}\": 'DOUBLE'"))
-            },
-            ("integer", _) => {
-                select_fields.push(format!("\"{name}\""));
-                type_fields.push(format!("\"{name}\": 'BIGINT'"));
-            },
-            ("boolean", _) => {
-                select_fields.push(format!("\"{name}\""));
-                type_fields.push(format!("\"{name}\": 'BOOLEAN'"));
-            },
+        let field = match (field_type, format_type) {
+            ("number", _) => Field::new(name, DataType::Float64, true),
+            ("integer", _) => Field::new(name, DataType::Int64, true),
+            ("boolean", _) => Field::new(name, DataType::Boolean, true),
             ("datetime", f) => {
                 if PARQUET_ALLOWED_DEFAULT.contains(&f) {
-                    select_fields.push(format!("CAST(\"{name}\" AS TIMESTAMP) AS \"{name}\""));
-                } else if PARQUET_ALLOWED_FORMAT.contains(&f) {
-                    select_fields.push(format!("strptime(\"{name}\", '{f}') AS \"{name}\""));
+                    Field::new(name, DataType::Timestamp(TimeUnit::Nanosecond, None), true)
                 } else {
-                    select_fields.push(format!("\"{name}\""));
+                    Field::new(name, DataType::Utf8, true)
                 }
-                type_fields.push(format!("\"{name}\": 'VARCHAR'"));
             },
-            _ => {
-                select_fields.push(format!("\"{name}\""));
-                type_fields.push(format!("\"{name}\": 'VARCHAR'"));
-            },
+            _ => Field::new(name, DataType::Utf8, true),
         };
+        arrow_fields.push(field);
     }
 
-    let mut delimiter = ",".to_string();
-    let mut quote = "\"".to_string();
-
-    if let Some(delim) = options.delimiter {
-        delimiter = std::str::from_utf8(&[delim])
-            .context(DelimeiterSnafu {})?
-            .to_owned();
-    }
-
-    if let Some(q) = options.quote {
-        quote = std::str::from_utf8(&[q])
-            .context(DelimeiterSnafu {})?
-            .to_owned();
-    }
-
+    let mut delimiter = options.delimiter.unwrap_or(b',');
     if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
         if dialect_delimiter.as_bytes().len() == 1 {
-            delimiter = dialect_delimiter.to_string()
+            delimiter = *dialect_delimiter.as_bytes().first().unwrap()
         }
     };
 
-    let conn = DuckdbConnection::open_in_memory().context(DuckDbSnafu {})?;
+    let file = File::open(file.clone()).context(IoSnafu { filename: file.to_string_lossy().to_string() })?;
 
-    let type_fields_str = type_fields.join(", ");
-    let columns = format!("{{ {type_fields_str} }}");
+    let arrow_csv_reader = ArrowReaderBuilder::new(std::sync::Arc::new(Schema::new(arrow_fields)))
+        .with_header(true)
+        .with_delimiter(delimiter)
+        .with_batch_size(1024).build(file).context(ArrowSnafu {})?;
 
-    let select = select_fields.join(" ,");
+    let props = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        .set_compression(Compression::SNAPPY);
 
-    let file_path = file.to_string_lossy().to_string();
+    let output = File::create(&output_path).context(IoSnafu {
+        filename: output_path.to_string_lossy(),
+    })?;
 
-    let output_string = output_path.to_string_lossy();
-    let statement = format!("COPY (SELECT {select} FROM read_csv('{file_path}', header=1, quote='{quote}', sep='{delimiter}', columns = {columns})) TO '{output_string}' ");
+    let mut writer = ArrowWriter::try_new(output, arrow_csv_reader.schema(), Some(props.build()))
+        .context(ParquetSnafu {})?;
 
-    conn.execute_batch("INSTALL parquet; LOAD parquet").context(DuckDbSnafu {})?;
-    conn.execute_batch(&statement).context(DuckDbSnafu {})?;
+    for batch in arrow_csv_reader {
+        let record_batch = batch.context(ArrowSnafu {})?;
+        writer.write(&record_batch).context(ParquetSnafu {})?;
+    }
+
+    match writer.close() {
+        Ok(_) => Ok(()),
+        Err(error) => Err(error),
+    }
+    .context(ParquetSnafu {})?;
 
     Ok(())
 }
 
-
-#[cfg(feature = "parquet")]
-fn create_parquet_auto(
-    file: PathBuf,
-    mut output_path: PathBuf,
-    options: &Options,
-) -> Result<Value, Error> {
-
-    ensure!(
-        file.exists() || file == PathBuf::from("/dev/stdin") || file == PathBuf::from("-"),
-        DatapackageConvertSnafu {
-            message: format!("File does not exist {}", file.to_string_lossy())
-        }
-    );
-
-    let mut file_name = file.file_stem().unwrap().to_string_lossy().to_string();
-
-    let mut file_path = file.to_string_lossy().to_string();
-    if file_path == "-" {
-        file_path = "/dev/stdin".into();
-        file_name = "stdin".into();
-    }
-
-    output_path.push(format!("{file_name}.parquet"));
-
-    let conn = DuckdbConnection::open_in_memory().context(DuckDbSnafu {})?;
-
-    let output_string = output_path.to_string_lossy();
-
-    let mut option_vec = vec![];
-
-    option_vec.push("AUTO_DETECT=1".to_owned());
-
-    if let Some(delim) = options.delimiter {
-        let delimiter = std::str::from_utf8(&[delim])
-            .context(DelimeiterSnafu {})?
-            .to_owned();
-        option_vec.push(format!("SEP={delimiter}"))
-    }
-
-    if let Some(quote) = options.quote {
-        let quote = std::str::from_utf8(&[quote])
-            .context(DelimeiterSnafu {})?
-            .to_owned();
-        option_vec.push(format!("QUOTE={quote}"))
-    }
-    let duckdb_options = option_vec.join(", ");
-
-    let statement = format!("COPY (SELECT * FROM read_csv('{file_path}', {duckdb_options})) TO '{output_string}' ");
-
-    conn.execute_batch("INSTALL parquet; LOAD parquet").context(DuckDbSnafu {})?;
-
-    conn.execute_batch(&statement).context(DuckDbSnafu {})?;
-
-    let mut stmt = conn.prepare("SELECT name, type, converted_type FROM parquet_schema(?);").context(DuckDbSnafu {})?;
-
-    let mut rows = stmt.query(duckdb::params![output_path.to_string_lossy()]).unwrap();
-
-    let mut fields: Vec<Value> = vec![];
-
-    while let Some(row) = rows.next().unwrap() {
-        let mut field_type = "string";
-        let name: String = row.get(0).unwrap();
-        if name == "duckdb_schema" {
-            continue
-        }
-
-        let row_type: String = row.get(1).unwrap();
-        let converted_type: String = row.get(2).unwrap();
-
-
-        if &row_type == "BOOLEAN" {
-            field_type = "boolean";
-        }
-
-        if &row_type == "DOUBLE" {
-            field_type = "number";
-        }
-
-        if &row_type == "INT64" && &converted_type == "INT_64" {
-            field_type = "integer";
-        }
-
-        if &row_type == "INT32" {
-            field_type = "integer";
-        }
-
-        if &row_type == "INT64" && converted_type.contains("TIMESTAMP")  {
-            field_type = "datetime";
-        }
-
-        let field = json!(
-            {
-                    "name": name,
-                    "type": field_type,
-                    "format": "",
-            }
-        );
-        fields.push(field);
-
-    }
-    let resource = json!({
-        "profile": "tabular-data-resource",
-        "name": file_name,
-        "schema": {
-            "fields": fields
-        },
-    });
-
-    Ok(resource)
-}
-
-#[cfg(feature = "parquet")]
 pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
@@ -1457,67 +1341,34 @@ pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value,
     Ok(datapackage)
 }
 
-#[cfg(feature = "parquet")]
 pub fn csvs_to_parquet_with_options(
     output_path: String,
     csvs: Vec<PathBuf>,
     mut options: Options,
 ) -> Result<Value, Error> {
-    let datapackage = if options.pipe {
-        stream_csvs_to_parquet(
-            output_path,
-            csvs,
-            options
-        )?
-    } else {
-        let describe_options = describe::Options::builder()
-            .threads(options.threads)
-            .stats(options.stats)
-            .stats_csv(options.stats_csv.clone())
-            .delimiter(options.delimiter)
-            .quote(options.quote)
-            .build();
-        let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
-            .context(DescribeSnafu {})?;
-        options.datapackage_string = true;
-        datapackage_to_parquet_with_options(
-            PathBuf::from(output_path),
-            serde_json::to_string(&datapackage).expect("should serialize"),
-            options,
-        )?;
-        datapackage
-    };
+    let describe_options = describe::Options::builder()
+        .threads(options.threads)
+        .stats(options.stats)
+        .stats_csv(options.stats_csv.clone())
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
+    options.datapackage_string = true;
+    datapackage_to_parquet_with_options(
+        PathBuf::from(output_path),
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
     Ok(datapackage)
 }
 
-#[cfg(feature = "parquet")]
-fn stream_csvs_to_parquet(
-    output_path: String,
-    csvs: Vec<PathBuf>,
-    options: Options,
-) -> Result<Value, Error> {
-    std::fs::create_dir_all(&output_path).context(IoSnafu {
-        filename: output_path.clone(),
-    })?;
-    let mut resources = vec![];
-    for csv in csvs {
-        resources.push(create_parquet_auto(csv, output_path.clone().into(), &options)?)
-    }
-
-    let datapackage = json!({
-        "profile": "tabular-data-package",
-        "resources": resources
-    });
-    Ok(datapackage)
-}
-
-#[cfg(feature = "parquet")]
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
     let options = Options::builder().build();
     datapackage_to_parquet_with_options(output_path, datapackage, options)
 }
 
-#[cfg(feature = "parquet")]
 pub fn datapackage_to_parquet_with_options(
     output_path: PathBuf,
     datapackage: String,
@@ -2149,6 +2000,7 @@ mod tests {
     use insta::{assert_yaml_snapshot, assert_debug_snapshot};
     use rusqlite::types::ValueRef;
     use std::io::BufRead;
+    use parquet::file::reader::SerializedFileReader;
 
     fn test_merged_csv_output(tmp: &PathBuf, name: String) {
         let csv_dir = tmp.join("csv");
@@ -2383,163 +2235,6 @@ mod tests {
         assert!(tmp.join("sqlite.db").exists());
     }
 
-    #[test]
-    fn test_parquet() {
-        let tmp_dir = TempDir::new().unwrap();
-        let tmp = tmp_dir.path().to_owned();
-
-        let options = Options::builder().delete_input_csv(true).build();
-
-        std::fs::copy(
-            "fixtures/add_resource/datapackage.json",
-            tmp.join("datapackage.json"),
-        )
-        .unwrap();
-        std::fs::create_dir_all(tmp.join("csv")).unwrap();
-        std::fs::copy(
-            "fixtures/add_resource/csv/games.csv",
-            tmp.join("csv/games.csv"),
-        )
-        .unwrap();
-        std::fs::copy(
-            "fixtures/add_resource/csv/games2.csv",
-            tmp.join("csv/games2.csv"),
-        )
-        .unwrap();
-
-        datapackage_to_parquet_with_options(
-            tmp.join("parquet"),
-            tmp.to_string_lossy().into(),
-            options,
-        )
-        .unwrap();
-
-        assert!(tmp.join("parquet/games.parquet").exists());
-        assert!(tmp.join("parquet/games2.parquet").exists());
-        assert!(!tmp.join("csv/games.csv").exists());
-        assert!(!tmp.join("csv/games2.csv").exists());
-
-        let games1 = tmp.join("parquet/games.parquet").to_string_lossy().to_string();
-        let games2 = tmp.join("parquet/games2.parquet").to_string_lossy().to_string();
-
-        for file in [games1, games2] {
-            let results = get_results(file);
-            insta::assert_debug_snapshot!(results)
-        }
-    }
-
-    fn get_results(file: String) -> Vec<Vec<duckdb::types::Value>> {
-        let conn = DuckdbConnection::open_in_memory().unwrap();
-        conn.execute_batch("INSTALL parquet; LOAD parquet").unwrap();
-        let mut stmt = conn.prepare(&format!("select * from '{file}';")).unwrap();
-        let mut rows = stmt.query([]).unwrap();
-
-        let mut results = vec![];
-
-        while let Some(row) = rows.next().unwrap() {
-            let mut result_row = vec![];
-            for i in 0.. {
-                if let Ok(item) = row.get(i) {
-                    let cell: duckdb::types::Value = item;
-                    result_row.push(cell)
-                } else {
-                     break
-                }
-            }
-            results.push(result_row)
-        }
-        results
-    }
-
-    #[test]
-    fn test_parquet_from_csvs() {
-        let tmp_dir = TempDir::new().unwrap();
-        let tmp = tmp_dir.path().to_owned();
-
-        csvs_to_parquet(
-            tmp.join("parquet").to_string_lossy().into(),
-            vec![
-                "fixtures/add_resource/csv/games.csv".into(),
-                "fixtures/add_resource/csv/games2.csv".into(),
-            ],
-        )
-        .unwrap();
-
-        assert!(tmp.join("parquet/games.parquet").exists());
-        assert!(tmp.join("parquet/games2.parquet").exists());
-
-        let games1 = tmp.join("parquet/games.parquet").to_string_lossy().to_string();
-        let games2 = tmp.join("parquet/games2.parquet").to_string_lossy().to_string();
-
-        for file in [games1, games2] {
-            let results = get_results(file);
-            insta::assert_debug_snapshot!(results)
-        }
-    }
-
-    #[test]
-    fn test_parquet_auto() {
-        let tmp_dir = TempDir::new().unwrap();
-        let tmp = tmp_dir.path().to_owned();
-
-        let options = Options::builder().pipe(true).build();
-
-        let datapackage = csvs_to_parquet_with_options(
-            tmp.join("parquet").to_string_lossy().into(),
-            vec![
-                "fixtures/add_resource/csv/games.csv".into(),
-                "fixtures/add_resource/csv/games2.csv".into(),
-            ],
-            options
-        )
-        .unwrap();
-
-        assert_yaml_snapshot!(datapackage);
-
-        assert!(tmp.join("parquet/games.parquet").exists());
-        assert!(tmp.join("parquet/games2.parquet").exists());
-
-        let games1 = tmp.join("parquet/games.parquet").to_string_lossy().to_string();
-        let games2 = tmp.join("parquet/games2.parquet").to_string_lossy().to_string();
-
-        for file in [games1, games2] {
-            let results = get_results(file);
-            insta::assert_debug_snapshot!(results)
-        }
-    }
-
-    #[test]
-    fn test_parquet_all_types_from_csvs() {
-        let tmp_dir = TempDir::new().unwrap();
-        let tmp = tmp_dir.path().to_owned();
-        //let tmp = PathBuf::from("/tmp");
-
-        csvs_to_parquet(
-            tmp.join("parquet").to_string_lossy().into(),
-            vec![
-                "src/fixtures/all_types.csv".into(),
-                "src/fixtures/all_types_semi_colon.csv".into(),
-            ],
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn test_parquet_dates_from_csvs() {
-        let tmp_dir = TempDir::new().unwrap();
-        let tmp = tmp_dir.path().to_owned();
-        //let tmp = PathBuf::from("/tmp");
-
-        let res = csvs_to_parquet(
-            tmp.join("parquet").to_string_lossy().into(),
-            vec!["fixtures/parquet_date.csv".into()],
-        )
-        .unwrap();
-        assert_yaml_snapshot!(res);
-        let file = tmp.join("parquet").join("parquet_date.parquet").to_string_lossy().to_string();
-        let results = get_results(file);
-        assert_debug_snapshot!(results);
-    }
 
     #[test]
     fn test_xlsx_from_csvs() {
@@ -3003,4 +2698,127 @@ mod tests {
         }
         output
     }
+
+        #[test]
+    fn test_parquet() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        let options = Options::builder().delete_input_csv(true).build();
+
+        std::fs::copy(
+            "fixtures/add_resource/datapackage.json",
+            tmp.join("datapackage.json"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.join("csv")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games.csv",
+            tmp.join("csv/games.csv"),
+        )
+        .unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games2.csv",
+            tmp.join("csv/games2.csv"),
+        )
+        .unwrap();
+
+        datapackage_to_parquet_with_options(
+            tmp.join("parquet"),
+            tmp.to_string_lossy().into(),
+            options,
+        )
+        .unwrap();
+
+        assert!(tmp.join("parquet/games.parquet").exists());
+        assert!(tmp.join("parquet/games2.parquet").exists());
+        assert!(!tmp.join("csv/games.csv").exists());
+        assert!(!tmp.join("csv/games2.csv").exists());
+
+        let games1 = File::open(tmp.join("parquet/games.parquet")).unwrap();
+        let games2 = File::open(tmp.join("parquet/games2.parquet")).unwrap();
+
+        for file in [games1, games2] {
+            let reader = SerializedFileReader::new(file).unwrap();
+
+            let mut data = vec![];
+            for row in reader {
+                for (_idx, (name, field)) in row.unwrap().get_column_iter().enumerate() {
+                    let field = match field {
+                        parquet::record::Field::Str(string) => string.to_owned(),
+                        other => other.to_string(),
+                    };
+                    data.push((name.to_owned(), field));
+                }
+            }
+            insta::assert_yaml_snapshot!(data)
+        }
+    }
+
+    #[test]
+    fn test_parquet_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        csvs_to_parquet(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec![
+                "fixtures/add_resource/csv/games.csv".into(),
+                "fixtures/add_resource/csv/games2.csv".into(),
+            ],
+        )
+        .unwrap();
+
+        assert!(tmp.join("parquet/games.parquet").exists());
+        assert!(tmp.join("parquet/games2.parquet").exists());
+
+        let games1 = File::open(tmp.join("parquet/games.parquet")).unwrap();
+        let games2 = File::open(tmp.join("parquet/games2.parquet")).unwrap();
+
+        for file in [games1, games2] {
+            let reader = SerializedFileReader::new(file).unwrap();
+
+            let mut data = vec![];
+            for row in reader {
+                for (_idx, (name, field)) in row.unwrap().get_column_iter().enumerate() {
+                    let field = match field {
+                        parquet::record::Field::Str(string) => string.to_owned(),
+                        other => other.to_string(),
+                    };
+                    data.push((name.to_owned(), field));
+                }
+            }
+            insta::assert_yaml_snapshot!(data)
+        }
+    }
+
+    #[test]
+    fn test_parquet_all_types_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        csvs_to_parquet(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_parquet_dates_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        let _res = csvs_to_parquet(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec!["fixtures/parquet_date.csv".into()],
+        )
+        .unwrap();
+    }
 }
+
