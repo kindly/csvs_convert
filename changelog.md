@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.10] - 2025-04-04
+
+### Changed
+
+- Revet to using arrow for parquet conversion.
+
+### Fixed
+
+- More date formats for postgres being used
+
 ## [0.8.10] - 2024-06-18
 
 ### New
