@@ -1222,6 +1222,7 @@ fn get_table_info(
 }
 
 
+#[cfg(feature = "parquet")]
 fn create_parquet(
     file: PathBuf,
     resource: Value,
@@ -1327,6 +1328,7 @@ fn create_parquet(
     Ok(())
 }
 
+#[cfg(feature = "parquet")]
 pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
     let mut options = Options::builder().build();
     let describe_options = describe::Options::builder().build();
@@ -1341,6 +1343,7 @@ pub fn csvs_to_parquet(output_path: String, csvs: Vec<PathBuf>) -> Result<Value,
     Ok(datapackage)
 }
 
+#[cfg(feature = "parquet")]
 pub fn csvs_to_parquet_with_options(
     output_path: String,
     csvs: Vec<PathBuf>,
@@ -1364,11 +1367,13 @@ pub fn csvs_to_parquet_with_options(
     Ok(datapackage)
 }
 
+#[cfg(feature = "parquet")]
 pub fn datapackage_to_parquet(output_path: PathBuf, datapackage: String) -> Result<(), Error> {
     let options = Options::builder().build();
     datapackage_to_parquet_with_options(output_path, datapackage, options)
 }
 
+#[cfg(feature = "parquet")]
 pub fn datapackage_to_parquet_with_options(
     output_path: PathBuf,
     datapackage: String,
