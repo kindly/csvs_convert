@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 
 description = "Some Datapackage Conversion"
@@ -40,8 +40,8 @@ csv-index = "0.1.6"
 threadpool = "1.8.1"
 log = "0.4.20"
 
-parquet = { version = "=54.2.1", default-features = false, features = ["arrow", "snap"], optional = true }
-arrow = { version = "=54.2.1", default-features = false, features = ["csv"], optional = true }
+parquet = { version = "54.3.1", default-features = false, features = ["arrow", "snap"], optional = true }
+arrow = { version = "54.3.1", default-features = false, features = ["csv"], optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 postgres = "0.19.8"
