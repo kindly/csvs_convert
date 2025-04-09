@@ -4,6 +4,7 @@ use csv::Writer;
 use minijinja::Environment;
 use postgres::{Client, NoTls};
 use rusqlite::Connection;
+use spreadsheet_ods::OdsError;
 
 use serde_json::{Value, json};
 use snafu::prelude::*;
@@ -43,6 +44,9 @@ pub enum Error {
 
     #[snafu(display("{}", message))]
     DatapackageXLSXError { message: String },
+
+    #[snafu(display("{}", message))]
+    DatapackageODSError { message: String },
 
     #[snafu(display("Error reading file {}: {}", filename, source))]
     IoError {
@@ -91,6 +95,9 @@ pub enum Error {
 
     #[snafu(display("Error with writing XLSX file"))]
     XLSXError { source: rust_xlsxwriter::XlsxError },
+
+    #[snafu(display("Error with writing ODS file"))]
+    OdsError { source: OdsError },
 
     #[snafu(display("Environment variable {} does not exist.", envvar))]
     EnvVarError {
@@ -1999,6 +2006,219 @@ fn get_column_changes(
 }
 
 
+fn create_ods_sheet(
+    csv_reader: csv::Reader<impl std::io::Read>,
+    resource: Value,
+    workbook: &mut spreadsheet_ods::WorkBook,
+    options: &Options,
+) -> Result<(), Error> {
+    let mut bold_format = spreadsheet_ods::CellStyle::new_empty();
+    bold_format.set_font_bold();
+    let bold_format_ref = workbook.add_cellstyle(bold_format);
+
+    let base_format = spreadsheet_ods::CellStyle::new_empty();
+    let base_format_ref = workbook.add_cellstyle(base_format);
+
+
+    let mut field_types = vec![];
+    if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
+        for value in fields_vec {
+            if let Some(field_type) = value["type"].as_str() {
+                field_types.push(field_type.to_owned());
+            }
+        }
+    };
+
+    ensure!(
+        field_types.len() < 65536,
+        DatapackageODSSnafu {
+            message: "Too many columns for ods file"
+        }
+    );
+
+    let mut title = String::new();
+
+    if let Some(t) = resource["name"].as_str() {
+        title = t.into()
+    };
+
+    if let Some(t) = resource["title"].as_str() {
+        if options.use_titles {
+            title = t.into()
+        }
+    }
+
+    ensure!(
+        !title.is_empty(),
+        DatapackageODSSnafu {
+            message: "A data resource either needs a name or title."
+        }
+    );
+
+    let new_title = truncate_xlsx_title(title.clone(), &options.seperator);
+
+    let mut worksheet = spreadsheet_ods::Sheet::new(new_title);
+
+    for (row_num, row) in csv_reader.into_records().enumerate() {
+        let this_row = row.context(CSVSnafu { filename: &title })?;
+
+        let mut format = base_format_ref.clone();
+
+        ensure!(
+            row_num < 1048575,
+            DatapackageODSSnafu {
+                message: "Number of rows is too large for ods file"
+            }
+        );
+
+        if row_num == 0 {
+            ensure!(
+                this_row.len() == field_types.len(),
+                DatapackageODSSnafu {
+                    message: "Number of fields in datapackage needs to match CSV fields."
+                }
+            );
+            format = bold_format_ref.clone();
+        }
+
+        for (col_index, value) in this_row.iter().enumerate() {
+            let mut cell = value.to_string();
+
+            if ["number", "integer"].contains(&field_types[col_index].as_str()) {
+                if let Ok(number) = value.parse::<f64>() {
+                    if number.is_finite() {
+                        worksheet.set_value(row_num.try_into().unwrap(), col_index.try_into().unwrap(), number);
+                    } else {
+                        log::warn!("Skipping number \"{number}\" as it is not allowed in ods format");
+                    }
+                    continue;
+                }
+            }
+
+            if INVALID_REGEX.is_match(&cell) {
+                cell = INVALID_REGEX.replace_all(&cell, "").to_string();
+            }
+
+            if cell.len() > 32767 {
+                log::warn!("WARNING: Cell larger than 32767 chararcters which is too large for ods format. The cell will be truncated, so some data will be missing.");
+                let mut index: usize = 32767;
+                while !cell.is_char_boundary(index) {
+                    index -= 1;
+                }
+                cell.truncate(index)
+            }
+
+            worksheet
+                .set_styled_value(
+                    row_num.try_into().expect("already tested length of string"),
+                    col_index.try_into().expect("already checked field count"),
+                    &cell,
+                    &format,
+                );
+        }
+    }
+
+    workbook.push_sheet(worksheet);
+    Ok(())
+}
+
+pub fn csvs_to_ods(ods_path: String, csvs: Vec<PathBuf>) -> Result<Value, Error> {
+    let mut options = Options::builder().build();
+    let describe_options = describe::Options::builder().build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
+    options.datapackage_string = true;
+    datapackage_to_ods_with_options(
+        ods_path,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
+    Ok(datapackage)
+}
+
+pub fn csvs_to_ods_with_options(
+    ods_path: String,
+    csvs: Vec<PathBuf>,
+    mut options: Options,
+) -> Result<Value, Error> {
+    let describe_options = describe::Options::builder()
+        .threads(options.threads)
+        .stats(options.stats)
+        .stats_csv(options.stats_csv.clone())
+        .delimiter(options.delimiter)
+        .quote(options.quote)
+        .build();
+    let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
+        .context(DescribeSnafu {})?;
+    options.datapackage_string = true;
+    datapackage_to_ods_with_options(
+        ods_path,
+        serde_json::to_string(&datapackage).expect("should serialize"),
+        options,
+    )?;
+    Ok(datapackage)
+}
+
+pub fn datapackage_to_ods(ods_path: String, datapackage: String) -> Result<(), Error> {
+    let options = Options::builder().build();
+    datapackage_to_ods_with_options(ods_path, datapackage, options)
+}
+
+pub fn datapackage_to_ods_with_options(
+    ods_path: String,
+    datapackage: String,
+    options: Options,
+) -> Result<(), Error> {
+    let mut datapackage_value = if options.datapackage_string {
+        serde_json::from_str(&datapackage).context(JSONDecodeSnafu {})?
+    } else {
+        datapackage_json_to_value(&datapackage)?
+    };
+
+    let resources_option = datapackage_value["resources"].as_array_mut();
+    ensure!(
+        resources_option.is_some(),
+        DatapackageMergeSnafu {
+            message: "Datapackages need a `resources` key as an array"
+        }
+    );
+
+    let mut pathbuf = PathBuf::from(&ods_path);
+    pathbuf.pop();
+
+    let mut workbook = spreadsheet_ods::WorkBook::new_empty();
+
+    for resource in resources_option.unwrap() {
+        let resource_path = resource["path"].as_str().unwrap();
+
+        let tempdir: Option<TempDir>;
+
+        let csv_path = if datapackage.ends_with(".zip") {
+            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
+            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+        } else {
+            get_path(&datapackage, resource_path, &options)?
+        };
+
+        let csv_reader = get_csv_reader_builder(&options, resource)
+            .has_headers(false)
+            .from_path(&csv_path).context(CSVSnafu {filename: csv_path.to_string_lossy().to_string()})?;
+
+        if options.delete_input_csv {
+            std::fs::remove_file(&csv_path).context(IoSnafu {
+                filename: csv_path.to_string_lossy(),
+            })?;
+        }
+        create_ods_sheet(csv_reader, resource.clone(), &mut workbook, &options)?;
+    }
+
+    spreadsheet_ods::write_ods(&mut workbook, &ods_path).context(OdsSnafu {})?;
+
+    Ok(())
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2240,18 +2460,51 @@ mod tests {
         assert!(tmp.join("sqlite.db").exists());
     }
 
+    #[test]
+    fn test_ods_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        csvs_to_ods(
+            tmp.join("output.ods").to_string_lossy().into(),
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
+        )
+        .unwrap();
+    }
+
 
     #[test]
     fn test_xlsx_from_csvs() {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
-        //let tmp = PathBuf::from("/tmp");
+        // let tmp = PathBuf::from("/tmp");
 
         csvs_to_xlsx(
             tmp.join("output.xlsx").to_string_lossy().into(),
             vec![
                 "src/fixtures/all_types.csv".into(),
                 "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_large_ods_from_csvs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        // let tmp = PathBuf::from("/tmp");
+
+        csvs_to_ods(
+            tmp.join("output.ods").to_string_lossy().into(),
+            vec![
+                "fixtures/large/csv/data.csv".into(),
+                "fixtures/large/csv/daily_16.csv".into(),
+                "fixtures/large/csv/data_weather.csv".into(),
             ],
         )
         .unwrap();
@@ -2272,6 +2525,39 @@ mod tests {
         )
         .unwrap();
     }
+
+    #[test]
+    fn test_ods() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+
+        let options = Options::builder().delete_input_csv(true).build();
+
+        std::fs::copy(
+            "fixtures/add_resource/datapackage.json",
+            tmp.join("datapackage.json"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.join("csv")).unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games.csv",
+            tmp.join("csv/games.csv"),
+        )
+        .unwrap();
+        std::fs::copy(
+            "fixtures/add_resource/csv/games2.csv",
+            tmp.join("csv/games2.csv"),
+        )
+        .unwrap();
+
+        datapackage_to_ods_with_options(
+            tmp.join("output.ods").to_string_lossy().into(),
+            tmp.to_string_lossy().into(),
+            options,
+        )
+        .unwrap();
+    }
+
 
     #[test]
     fn test_xlsx() {
@@ -2300,6 +2586,20 @@ mod tests {
         datapackage_to_xlsx_with_options(
             tmp.join("output.xlsx").to_string_lossy().into(),
             tmp.to_string_lossy().into(),
+            options,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_large_ods() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        let options = Options::builder().build();
+
+        datapackage_to_ods_with_options(
+            tmp.join("output.ods").to_string_lossy().into(),
+            "fixtures/large".into(),
             options,
         )
         .unwrap();

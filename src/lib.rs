@@ -40,9 +40,11 @@ pub use describer::{Describer, Options as DescriberOptions};
 pub use converters::{
     csvs_to_postgres, csvs_to_postgres_with_options,
     csvs_to_sqlite, csvs_to_sqlite_with_options, csvs_to_xlsx, csvs_to_xlsx_with_options,
+    csvs_to_ods, csvs_to_ods_with_options,
     datapackage_to_postgres,
     datapackage_to_postgres_with_options, datapackage_to_sqlite,
     datapackage_to_sqlite_with_options, datapackage_to_xlsx, datapackage_to_xlsx_with_options,
+    datapackage_to_ods, datapackage_to_ods_with_options,
     merge_datapackage, merge_datapackage_jsons, merge_datapackage_with_options,
     Error, Options
 };
