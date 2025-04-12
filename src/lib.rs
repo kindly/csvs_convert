@@ -50,6 +50,7 @@ pub use converters::{
 };
 
 #[cfg(feature = "parquet")]
+#[cfg(not(target_family = "wasm"))]
 pub use converters::{
     csvs_to_parquet, csvs_to_parquet_with_options, 
     datapackage_to_parquet, datapackage_to_parquet_with_options};
