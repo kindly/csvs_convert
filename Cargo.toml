@@ -50,7 +50,7 @@ minijinja = { version = "2.2.0" }
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 rand = "0.8.5"
-rust_xlsxwriter = { version = "0.85.0", features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.87.0", features = ["constant_memory"] }
 
 [profile.bench]
 debug = true
