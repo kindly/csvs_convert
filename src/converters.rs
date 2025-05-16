@@ -161,6 +161,8 @@ pub struct Options {
     pub pipe: bool,
     #[builder(default)]
     pub truncate: bool,
+    #[builder(default)]
+    pub all_strings: bool,
 }
 
 lazy_static::lazy_static! {
@@ -969,6 +971,7 @@ pub fn csvs_to_sqlite_with_options(
         .stats_csv(options.stats_csv.clone())
         .delimiter(options.delimiter)
         .quote(options.quote)
+        .all_strings(options.all_strings)
         .build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
         .context(DescribeSnafu {})?;
@@ -1362,6 +1365,7 @@ pub fn csvs_to_parquet_with_options(
         .stats_csv(options.stats_csv.clone())
         .delimiter(options.delimiter)
         .quote(options.quote)
+        .all_strings(options.all_strings)
         .build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
         .context(DescribeSnafu {})?;
@@ -1605,6 +1609,7 @@ pub fn csvs_to_xlsx_with_options(
         .stats_csv(options.stats_csv.clone())
         .delimiter(options.delimiter)
         .quote(options.quote)
+        .all_strings(options.all_strings)
         .build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
         .context(DescribeSnafu {})?;
@@ -1701,6 +1706,7 @@ pub fn csvs_to_postgres_with_options(
         .stats_csv(options.stats_csv.clone())
         .delimiter(options.delimiter)
         .quote(options.quote)
+        .all_strings(options.all_strings)
         .build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
         .context(DescribeSnafu {})?;
@@ -2147,6 +2153,7 @@ pub fn csvs_to_ods_with_options(
         .stats_csv(options.stats_csv.clone())
         .delimiter(options.delimiter)
         .quote(options.quote)
+        .all_strings(options.all_strings)
         .build();
     let datapackage = describe::describe_files(csvs, PathBuf::new(), &describe_options)
         .context(DescribeSnafu {})?;
@@ -3109,6 +3116,25 @@ mod tests {
                 "src/fixtures/all_types.csv".into(),
                 "src/fixtures/all_types_semi_colon.csv".into(),
             ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_parquet_all_types_from_csvs_as_strings() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path().to_owned();
+        //let tmp = PathBuf::from("/tmp");
+
+        let options = Options::builder().all_strings(false).build();
+
+        csvs_to_parquet_with_options(
+            tmp.join("parquet").to_string_lossy().into(),
+            vec![
+                "src/fixtures/all_types.csv".into(),
+                "src/fixtures/all_types_semi_colon.csv".into(),
+            ],
+            options,
         )
         .unwrap();
     }

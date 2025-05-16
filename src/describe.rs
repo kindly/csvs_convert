@@ -32,6 +32,8 @@ pub struct Options {
     pub stats_csv: String,
     #[builder(default)]
     pub threads: usize,
+    #[builder(default)]
+    pub all_strings: bool,
 }
 
 fn simple_sniff(file: &PathBuf) -> Result<u8, DescribeError> {
@@ -91,6 +93,7 @@ pub fn describe_file(
     let describer_options = DescriberOptions::builder()
         .mergable_stats(options.threads > 0 && (options.stats || !options.stats_csv.is_empty()))
         .stats(options.stats || !options.stats_csv.is_empty())
+        .force_string(options.all_strings)
         .build();
 
     let mut describe_value = if options.threads > 0 {
