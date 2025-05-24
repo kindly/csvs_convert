@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
 use rust_xlsxwriter::{Format, Workbook};
-use rand::distributions::{Alphanumeric, DistString};
+use rand::distr::{Alphanumeric, SampleString};
 
 #[cfg(feature = "parquet")]
 use arrow::csv::ReaderBuilder as ArrowReaderBuilder;
@@ -637,7 +637,7 @@ fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBui
 }
 
 fn rand() -> String {
-    return Alphanumeric.sample_string(&mut rand::thread_rng(), 5);
+    return Alphanumeric.sample_string(&mut rand::rng(), 5);
 }
 
 fn to_db_type(type_: String, format: String) -> String {
