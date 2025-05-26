@@ -42,7 +42,7 @@ log = "0.4.20"
 
 parquet = { version = "54.3.1", default-features = false, features = ["arrow", "snap"], optional = true }
 arrow = { version = "54.3.1", default-features = false, features = ["csv"], optional = true }
-spreadsheet-ods = "0.24.0"
+spreadsheet-ods = "0.25"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 postgres = "0.19.8"
