@@ -48,7 +48,7 @@ spreadsheet-ods = "0.25"
 postgres = "0.19.8"
 minijinja = { version = "2.2.0" }
 zip = { version = "4", default-features = false, features = ["deflate"] }
-rusqlite = { version = "0.35", features = ["bundled"] }
+rusqlite = { version = "0.36", features = ["bundled"] }
 rand = "0.9"
 rust_xlsxwriter = { version = "0.87.0", features = ["constant_memory"] }
 
