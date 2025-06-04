@@ -23,7 +23,7 @@ pathdiff = "0.2.1"
 petgraph = { version = "0.8", default-features = false, features = [
   "graphmap",
 ] }
-typed-builder = "0.20"
+typed-builder = "0.21"
 lazy_static = "1.5.0"
 regex = { version = "1" }
 thiserror = "2"
