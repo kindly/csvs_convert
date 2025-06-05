@@ -1218,7 +1218,7 @@ fn get_table_info(
             table_to_schema.insert(table_name.to_owned(), resource.clone());
         }
     }
-    let mut relationhip_graph = petgraph::graphmap::DiGraphMap::new();
+    let mut relationhip_graph = petgraph::graphmap::DiGraphMap::<_, _, std::hash::RandomState>::new();
     for (x, y) in table_links.iter() {
         relationhip_graph.add_edge(y, x, 1);
     }
