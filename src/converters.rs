@@ -1935,12 +1935,12 @@ set search_path = "{schema}";
             .context(DelimeiterSnafu {})?
             .to_owned();
 
-        let query = format!("copy {schema_table}({all_columns}) from STDIN WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'");
+        let query = format!("copy {schema_table}({all_columns}) from STDIN WITH (FORMAT CSV, HEADER, QUOTE '{quote}', DELIMITER '{delimiter}', FORCE_NULL ({all_columns}))");
 
         if let Some(dump_writer) = dump_writer.as_mut() {
             let full_path = canonicalize(resource_path).context(IoSnafu {filename: resource_path})?;
             let full_path = full_path.to_string_lossy();
-            writeln!(dump_writer, "\\copy {schema_table}({all_columns}) from '{full_path}' WITH CSV HEADER QUOTE '{quote}' DELIMITER '{delimiter}'").context(IoSnafu {filename: &options.dump_file})?;
+            writeln!(dump_writer, "\\copy {schema_table}({all_columns}) from '{full_path}' WITH (FORMAT CSV, HEADER, QUOTE '{quote}', DELIMITER '{delimiter}', FORCE_NULL ({all_columns}))").context(IoSnafu {filename: &options.dump_file})?;
         }
 
         let tempdir: Option<TempDir>;
