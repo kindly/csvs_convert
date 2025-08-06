@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn write_datapackage() {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        let path = tmpdir.into_path();
+        let path = tmpdir.keep();
         let input_file = path.join("all_types.csv");
         let options = Options::builder()
             .stats_csv(path.join("stats.csv").to_string_lossy().into())
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn write_datapackage_multi() {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        let path = tmpdir.into_path();
+        let path = tmpdir.keep();
         let input_file = path.join("all_types.csv");
         let options = Options::builder()
             .threads(4)
