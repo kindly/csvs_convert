@@ -2900,7 +2900,7 @@ mod tests {
     fn test_truncate_sqlite() {
         let options = Options::builder().truncate(true).build();
         datapackage_to_sqlite_with_options(
-            "/tmp/sqlite.db".into(),
+            "/tmp/truncate.db".into(),
             "fixtures/evolve/base".into(),
             options,
         )
@@ -2908,7 +2908,7 @@ mod tests {
 
         let options = Options::builder().truncate(true).build();
         datapackage_to_sqlite_with_options(
-            "/tmp/sqlite.db".into(),
+            "/tmp/truncate.db".into(),
             "fixtures/evolve/base".into(),
             options,
         )
