@@ -2385,7 +2385,7 @@ mod tests {
             let mut stmt = conn.prepare(&format!("select * from {}", table)).unwrap();
             let mut rows = stmt.query([]).unwrap();
 
-            let mut output: Vec<(u64, String)> = vec![];
+            let mut output: Vec<(i64, String)> = vec![];
             while let Some(row) = rows.next().unwrap() {
                 output.push((row.get(0).unwrap(), row.get(1).unwrap()));
             }
@@ -2416,7 +2416,7 @@ mod tests {
             let mut stmt = conn.prepare(&format!("select * from {}", table)).unwrap();
             let mut rows = stmt.query([]).unwrap();
 
-            let mut output: Vec<(u64, String)> = vec![];
+            let mut output: Vec<(i64, String)> = vec![];
             while let Some(row) = rows.next().unwrap() {
                 output.push((row.get(0).unwrap(), row.get(1).unwrap()));
             }

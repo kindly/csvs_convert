@@ -23,7 +23,7 @@ pathdiff = "0.2.3"
 petgraph = { version = "0.8", default-features = false, features = [
   "graphmap",
 ] }
-typed-builder = "0.22"
+typed-builder = "0.23"
 lazy_static = "1.5.0"
 regex = { version = "1" }
 thiserror = "2"
@@ -46,11 +46,11 @@ spreadsheet-ods = "1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 postgres = "0.19.8"
-minijinja = { version = "2.2.0" }
-zip = { version = "4", default-features = false, features = ["deflate"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+minijinja = { version = "2.15" }
+zip = { version = "7", default-features = false, features = ["deflate"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 rand = "0.9"
-rust_xlsxwriter = { version = "0.90", features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.93", features = ["constant_memory"] }
 
 [profile.bench]
 debug = true
