@@ -1,5 +1,6 @@
 ---
 source: src/describer.rs
+assertion_line: 778
 expression: describer.stats()
 ---
 Object {
@@ -14,8 +15,8 @@ Object {
     "top_20": Null,
     "sum": Number(500500.0),
     "mean": Number(500.0),
-    "variance": Number(83500.00000000001),
-    "stddev": Number(288.96366553599785),
+    "variance": Number(83500.0),
+    "stddev": Number(288.9636655359978),
     "min_number": Number(0.0),
     "max_number": Number(1000.0),
     "median": Number(500.0),

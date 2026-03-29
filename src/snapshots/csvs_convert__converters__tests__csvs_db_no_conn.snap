@@ -1,7 +1,7 @@
 ---
 source: src/converters.rs
+assertion_line: 2676
 expression: lines
-snapshot_kind: text
 ---
 - "CREATE TABLE IF NOT EXISTS \"all_types_semi_colon\" ( \"string\" TEXT "
 - " , \"array\" JSONB "
@@ -14,7 +14,7 @@ snapshot_kind: text
 - " , \"integer\" BIGINT "
 - "); "
 - ""
-- "\\copy \"all_types_semi_colon\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/home/david/projects/datapackage_convert/src/fixtures/all_types_semi_colon.csv' WITH (FORMAT CSV, HEADER, QUOTE '\"', DELIMITER ';', FORCE_NULL (\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\"))"
+- "\\copy \"all_types_semi_colon\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/Users/joelnatividad/GitHub/csvs_convert/src/fixtures/all_types_semi_colon.csv' WITH (FORMAT CSV, HEADER, QUOTE '\"', DELIMITER ';', FORCE_NULL (\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\"))"
 - "CREATE TABLE IF NOT EXISTS \"all_types\" ( \"string\" TEXT "
 - " , \"array\" JSONB "
 - " , \"object\" JSONB "
@@ -26,4 +26,4 @@ snapshot_kind: text
 - " , \"integer\" BIGINT "
 - "); "
 - ""
-- "\\copy \"all_types\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/home/david/projects/datapackage_convert/src/fixtures/all_types.csv' WITH (FORMAT CSV, HEADER, QUOTE '\"', DELIMITER ',', FORCE_NULL (\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\"))"
+- "\\copy \"all_types\"(\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\") from '/Users/joelnatividad/GitHub/csvs_convert/src/fixtures/all_types.csv' WITH (FORMAT CSV, HEADER, QUOTE '\"', DELIMITER ',', FORCE_NULL (\"string\", \"array\", \"object\", \"date\", \"datetime\", \"time\", \"boolean\", \"number\", \"integer\"))"
