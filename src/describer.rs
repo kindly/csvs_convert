@@ -355,7 +355,7 @@ impl Describer {
             if !self.options.mergable_stats {
                 self.tdigest.insert(number);
             }
-            self.stats.add(number);
+            self.stats.add(&number);
             if self.max_number.is_none() {
                 self.max_number = Some(number);
                 self.min_number = Some(number);
