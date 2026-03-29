@@ -33,7 +33,7 @@ pdatastructs = { version = "0.7.0", features = [
   "num-traits",
   "fixedbitset",
 ], default-features = false }
-streaming-stats = "0.2.3"
+qsv-stats = "0.48"
 counter = "0.7"
 crossbeam-channel = "0.5.13"
 csv-index = "0.1.6"
