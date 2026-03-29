@@ -13,10 +13,10 @@ homepage = "https://github.com/kindly/csvs_convert"
 
 [dependencies]
 
-chrono = { version = "0.4.38", default-features = false }
+chrono = { version = "0.4", default-features = false }
 serde_json = { version = "1", features = ["preserve_order"] }
 csv = "1.4.0"
-snafu = "0.8"
+snafu = "0.9"
 tempfile = "3"
 walkdir = "2.5.0"
 pathdiff = "0.2.3"
@@ -40,17 +40,17 @@ csv-index = "0.1.6"
 threadpool = "1.8.1"
 log = "0.4.20"
 
-parquet = { version = "56", default-features = false, features = ["arrow", "snap"], optional = true }
-arrow = { version = "56", default-features = false, features = ["csv"], optional = true }
+parquet = { version = "58", default-features = false, features = ["arrow", "snap"], optional = true }
+arrow = { version = "58", default-features = false, features = ["csv"], optional = true }
 spreadsheet-ods = "1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 postgres = "0.19.8"
 minijinja = { version = "2.15" }
 zip = { version = "7", default-features = false, features = ["deflate"] }
-rusqlite = { version = "0.38", features = ["bundled"] }
-rand = "0.9"
-rust_xlsxwriter = { version = "0.93", features = ["constant_memory"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
+rand = "0.10"
+rust_xlsxwriter = { version = "0.94", features = ["constant_memory"] }
 
 [profile.bench]
 debug = true
