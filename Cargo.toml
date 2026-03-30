@@ -45,7 +45,7 @@ arrow = { version = "58", default-features = false, features = ["csv"], optional
 spreadsheet-ods = "1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-postgres = "0.19.8"
+postgres = "0.19"
 minijinja = { version = "2.15" }
 zip = { version = "7", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
