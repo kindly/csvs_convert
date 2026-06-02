@@ -1105,7 +1105,12 @@ pub fn datapackage_to_sqlite_with_options(
         if create {
             let resource_sqlite = render_sqlite_table(resource.clone())?;
             if let Some(conn) = conn.as_mut() {
-                conn.execute(&resource_sqlite, []).context(RusqliteSnafu {
+                // `render_sqlite_table` can emit multiple statements (a CREATE
+                // TABLE plus CREATE INDEX statements for foreign keys), so use
+                // `execute_batch`. Since rusqlite 0.40, `execute` prepares the
+                // trailing statement eagerly and fails with "no such table"
+                // because the CREATE TABLE has not run yet.
+                conn.execute_batch(&resource_sqlite).context(RusqliteSnafu {
                     message: "Error making sqlite tables: ",
                 })?;
             }
