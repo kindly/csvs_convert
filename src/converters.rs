@@ -166,9 +166,7 @@ pub struct Options {
 }
 
 lazy_static::lazy_static! {
-    #[allow(clippy::invalid_regex)]
-    pub static ref INVALID_REGEX: regex::Regex = regex::RegexBuilder::new(r"[\000-\010]|[\013-\014]|[\016-\037]")
-        .octal(true)
+    pub static ref INVALID_REGEX: regex::Regex = regex::RegexBuilder::new(r"[\x00-\x08]|[\x0b-\x0c]|[\x0e-\x1f]")
         .build()
         .expect("we know the regex is fine");
 }
@@ -2385,7 +2383,7 @@ mod tests {
             let mut stmt = conn.prepare(&format!("select * from {}", table)).unwrap();
             let mut rows = stmt.query([]).unwrap();
 
-            let mut output: Vec<(u64, String)> = vec![];
+            let mut output: Vec<(i64, String)> = vec![];
             while let Some(row) = rows.next().unwrap() {
                 output.push((row.get(0).unwrap(), row.get(1).unwrap()));
             }
@@ -2416,7 +2414,7 @@ mod tests {
             let mut stmt = conn.prepare(&format!("select * from {}", table)).unwrap();
             let mut rows = stmt.query([]).unwrap();
 
-            let mut output: Vec<(u64, String)> = vec![];
+            let mut output: Vec<(i64, String)> = vec![];
             while let Some(row) = rows.next().unwrap() {
                 output.push((row.get(0).unwrap(), row.get(1).unwrap()));
             }
@@ -2709,29 +2707,41 @@ mod tests {
 
     #[test]
     fn test_from_env() {
-        let options = Options::builder()
-            .drop(true)
-            .schema("test_env".into())
-            .build();
+        temp_env::with_var(
+            "POSTGRES_URL",
+            Some("postgresql://test@localhost/test"),
+            || {
+                let options = Options::builder()
+                    .drop(true)
+                    .schema("test_env".into())
+                    .build();
 
-        std::env::set_var("POSTGRES_URL", "postgresql://test@localhost/test");
+                datapackage_to_postgres_with_options(
+                    " env= POSTGRES_URL ".into(),
+                    "fixtures/large".into(),
+                    options,
+                )
+                .unwrap();
+            },
+        );
 
-        datapackage_to_postgres_with_options(
-            " env= POSTGRES_URL ".into(),
-            "fixtures/large".into(),
-            options,
-        )
-        .unwrap();
+        temp_env::with_var(
+            "DATABASE_URL",
+            Some("postgresql://test@localhost/test"),
+            || {
+                let options = Options::builder()
+                    .drop(true)
+                    .schema("test_env".into())
+                    .build();
 
-        let options = Options::builder()
-            .drop(true)
-            .schema("test_env".into())
-            .build();
-
-        std::env::set_var("DATABASE_URL", "postgresql://test@localhost/test");
-
-        datapackage_to_postgres_with_options(" env  ".into(), "fixtures/large".into(), options)
-            .unwrap();
+                datapackage_to_postgres_with_options(
+                    " env  ".into(),
+                    "fixtures/large".into(),
+                    options,
+                )
+                .unwrap();
+            },
+        );
     }
 
     // #[test]

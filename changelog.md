@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.13.0] - 2026-06-02
+
+### Changed
+
+- Migrate to Rust 2024 edition.
+- Update all dependencies to latest stable, including major upgrades to `arrow`/`parquet` (54 → 58), `zip` (4 → 8), `rusqlite` (0.36 → 0.40), `rand` (0.9 → 0.10), `snafu` (0.8 → 0.9), `typed-builder` (0.21 → 0.23), `counter` (0.6 → 0.7) and `spreadsheet-ods` (0.25 → 1.0).
+
 ## [0.11] - 2025-04-09
 
 ### New 
