@@ -33,12 +33,12 @@ pdatastructs = { version = "0.7.0", features = [
   "num-traits",
   "fixedbitset",
 ], default-features = false }
-qsv-stats = "0.50"
+qsv-stats = "0.51"
 counter = "0.7.1"
 crossbeam-channel = "0.5.15"
 csv-index = "0.1.6"
 threadpool = "1.8.1"
-log = "0.4.30"
+log = "0.4"
 
 parquet = { version = "58.3.0", default-features = false, features = ["arrow", "snap"], optional = true }
 arrow = { version = "58.3.0", default-features = false, features = ["csv"], optional = true }
