@@ -13,7 +13,7 @@ homepage = "https://github.com/kindly/csvs_convert"
 
 [dependencies]
 
-chrono = { version = "0.4.44", default-features = false }
+chrono = { version = "0.4", default-features = false }
 serde_json = { version = "1", features = ["preserve_order"] }
 csv = "1.4.0"
 snafu = "0.9"
@@ -33,12 +33,12 @@ pdatastructs = { version = "0.7.0", features = [
   "num-traits",
   "fixedbitset",
 ], default-features = false }
-streaming-stats = "0.2.3"
+qsv-stats = "0.54"
 counter = "0.7.1"
 crossbeam-channel = "0.5.15"
 csv-index = "0.1.6"
 threadpool = "1.8.1"
-log = "0.4.30"
+log = "0.4"
 
 parquet = { version = "58.3.0", default-features = false, features = ["arrow", "snap"], optional = true }
 arrow = { version = "58.3.0", default-features = false, features = ["csv"], optional = true }
