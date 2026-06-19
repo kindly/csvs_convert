@@ -1,7 +1,7 @@
 pub use crate::describe_csv::{describe as describe_csv, describe_parallel};
 pub use crate::describer::{Describer, Options as DescriberOptions};
 use pathdiff::diff_paths;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;

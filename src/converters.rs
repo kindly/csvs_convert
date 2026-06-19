@@ -6,9 +6,11 @@ use postgres::{Client, NoTls};
 use rusqlite::Connection;
 use spreadsheet_ods::OdsError;
 
+use rand::distr::{Alphanumeric, SampleString};
+use rust_xlsxwriter::{Format, Workbook};
 use serde_json::{Value, json};
 use snafu::prelude::*;
-use snafu::{ensure, Snafu};
+use snafu::{Snafu, ensure};
 use std::collections::HashMap;
 use std::fmt::Write as fmt_write;
 use std::fs::{File, canonicalize};
@@ -17,8 +19,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use typed_builder::TypedBuilder;
-use rust_xlsxwriter::{Format, Workbook};
-use rand::distr::{Alphanumeric, SampleString};
 
 #[cfg(feature = "parquet")]
 use arrow::csv::ReaderBuilder as ArrowReaderBuilder;
@@ -31,7 +31,6 @@ use parquet::{
     arrow::ArrowWriter, basic::Compression, errors::ParquetError,
     file::properties::WriterProperties,
 };
-
 
 #[non_exhaustive]
 #[derive(Debug, Snafu)]
@@ -388,7 +387,7 @@ pub fn merge_datapackage_jsons(datapackages: Vec<String>) -> Result<Value, Error
 }
 
 fn write_merged_csv(
-    csv_reader: csv::Reader<impl std::io::Read>,
+    mut csv_reader: csv::Reader<impl std::io::Read>,
     mut csv_writer: Writer<File>,
     resource_fields: &HashMap<String, usize>,
     output_fields: &[String],
@@ -397,23 +396,23 @@ fn write_merged_csv(
         .iter()
         .map(|field| resource_fields.get(field).copied())
         .collect();
-    let output_map_len = output_map.len();
-    for row in csv_reader.into_records() {
-        let mut output_row = Vec::with_capacity(output_map_len);
-        let row = row.context(CSVRowSnafu {})?;
-        for item in &output_map {
-            match item {
-                Some(index) => output_row.push(row.get(*index).expect("index should exist")),
-                None => output_row.push(""),
-            }
-        }
+    // Reuse one ByteRecord across rows: no per-row StringRecord allocation and
+    // no UTF-8 re-validation. write_record consumes the mapping iterator
+    // directly, so there's no per-row output Vec either.
+    let mut record = csv::ByteRecord::new();
+    while csv_reader
+        .read_byte_record(&mut record)
+        .context(CSVRowSnafu {})?
+    {
         csv_writer
-            .write_record(output_row)
+            .write_record(output_map.iter().map(|item| match item {
+                Some(index) => record.get(*index).expect("index should exist"),
+                None => b"" as &[u8],
+            }))
             .context(CSVRowSnafu {})?;
     }
     Ok(csv_writer)
 }
-
 
 fn get_path(file: &str, resource_path: &str, options: &Options) -> Result<PathBuf, Error> {
     if options.datapackage_string {
@@ -474,7 +473,7 @@ pub fn merge_datapackage_with_options(
         filename: output_path.to_string_lossy(),
     })?;
 
-    let mut merged_datapackage_json = merge_datapackage_jsons(datapackages.clone())?;
+    let merged_datapackage_json = merge_datapackage_jsons(datapackages.clone())?;
 
     let path = PathBuf::from(&output_path);
 
@@ -488,99 +487,38 @@ pub fn merge_datapackage_with_options(
         filename: datapackage_json_path_buf.to_string_lossy(),
     })?;
 
-    let mut csv_outputs = HashMap::new();
-    let mut output_fields = HashMap::new();
+    // Parse each part's datapackage.json once; the per-table tasks read each
+    // part's field order from these (the union/output order is in the merged json).
+    let mut parts: Vec<(String, Value)> = Vec::with_capacity(datapackages.len());
+    for file in &datapackages {
+        parts.push((file.clone(), datapackage_json_to_value(file)?));
+    }
 
-    for resource in merged_datapackage_json["resources"]
-        .as_array_mut()
+    let resources: Vec<&Value> = merged_datapackage_json["resources"]
+        .as_array()
         .expect("we know its an array")
-    {
-        let mut field_order_map = serde_json::Map::new();
-        let mut fields: Vec<String> = Vec::new();
-        for (index, field) in resource["schema"]["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .enumerate()
-        {
-            let name = field["name"].as_str().expect("we know its a string");
-            field_order_map.insert(name.into(), index.into());
-            fields.push(name.to_owned());
-        }
+        .iter()
+        .collect();
 
-        let resource_path = resource["path"]
-            .as_str()
-            .expect("we know its a string")
-            .to_owned();
-
-        let mut full_path = path.join(&resource_path);
+    // Create each table's parent directory up front (serial), so the parallel
+    // writers below never race on directory creation.
+    for resource in &resources {
+        let resource_path = resource["path"].as_str().expect("we know its a string");
+        let mut full_path = path.join(resource_path);
         full_path.pop();
         std::fs::create_dir_all(&full_path).context(IoSnafu {
             filename: full_path.to_string_lossy(),
         })?;
-
-        let mut writer = Writer::from_path(path.join(&resource_path)).context(CSVSnafu {
-            filename: &resource_path,
-        })?;
-        writer.write_record(fields.clone()).context(CSVSnafu {
-            filename: &resource_path,
-        })?;
-        csv_outputs.insert(resource_path.clone(), writer);
-
-        output_fields.insert(resource_path.clone(), fields);
-
-        resource
-            .as_object_mut()
-            .expect("we know its a obj")
-            .insert("field_order_map".into(), field_order_map.into());
     }
 
-    for file in datapackages.iter() {
-        let mut datapackage_json = datapackage_json_to_value(file)?;
-        for resource in datapackage_json["resources"].as_array_mut().unwrap() {
-            let mut resource_fields = HashMap::new();
-            for (num, field) in resource["schema"]["fields"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .enumerate()
-            {
-                resource_fields.insert(field["name"].as_str().unwrap().to_owned(), num);
-            }
-            let resource_path = resource["path"].as_str().unwrap().to_owned();
-
-            let mut csv_output = csv_outputs.remove(&resource_path).unwrap();
-
-            let output_fields = output_fields.get_mut(&resource_path).unwrap();
-
-            let tempdir: Option<TempDir>;
-
-            let csv_path = if file.ends_with(".zip") {
-                tempdir = Some(TempDir::new().context(IoSnafu { filename: file })?);
-                extract_csv_file(file, &resource_path, &tempdir)?
-            } else {
-                get_path(file, &resource_path, &options)?
-            };
-
-            let csv_reader =
-                get_csv_reader_builder(&options, resource).from_path(&csv_path).unwrap();
-
-            csv_output =
-                write_merged_csv(csv_reader, csv_output, &resource_fields, output_fields)?;
-
-            if options.delete_input_csv {
-                std::fs::remove_file(&csv_path).context(IoSnafu {
-                    filename: csv_path.to_string_lossy(),
-                })?;
-            }
-
-            csv_outputs.insert(resource_path, csv_output);
-        }
-    }
-
-    for (name, csv_file) in csv_outputs.iter_mut() {
-        csv_file.flush().context(IoSnafu { filename: name })?;
-    }
+    // Each table is independent — its own output file fed from its own input part
+    // files — so merge the tables in parallel. rayon work-steals across them,
+    // which balances the very uneven table sizes (a wide main table vs tiny
+    // child tables) onto a core-sized pool.
+    use rayon::prelude::*;
+    resources
+        .par_iter()
+        .try_for_each(|resource| merge_one_resource(&path, resource, &parts, &options))?;
 
     if tmpdir_option.is_some() {
         crate::zip_dir::zip_dir(&output_path, &original_path).context(ZipSnafu {
@@ -591,7 +529,137 @@ pub fn merge_datapackage_with_options(
     Ok(())
 }
 
-fn extract_csv_file(file: &String, resource_path: &String, tempdir: &Option<TempDir>) -> Result<PathBuf, Error> {
+/// Merge one table: write its header (the merged field order), then append every
+/// part's rows for this table — column-mapped into that order — in datapackage
+/// order. Independent of every other table, so these run concurrently.
+fn merge_one_resource(
+    out_path: &std::path::Path,
+    resource: &Value,
+    parts: &[(String, Value)],
+    options: &Options,
+) -> Result<(), Error> {
+    let resource_path = resource["path"].as_str().expect("we know its a string");
+    let output_fields: Vec<String> = resource["schema"]["fields"]
+        .as_array()
+        .expect("we know its an array")
+        .iter()
+        .map(|field| {
+            field["name"]
+                .as_str()
+                .expect("we know its a string")
+                .to_owned()
+        })
+        .collect();
+
+    let mut writer = Writer::from_path(out_path.join(resource_path)).context(CSVSnafu {
+        filename: resource_path,
+    })?;
+    writer.write_record(&output_fields).context(CSVSnafu {
+        filename: resource_path,
+    })?;
+
+    for (file, datapackage_json) in parts {
+        let Some(part_resource) = datapackage_json["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["path"].as_str() == Some(resource_path))
+        else {
+            continue; // this part produced no rows for this table
+        };
+
+        let part_field_names: Vec<&str> = part_resource["schema"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+
+        let tempdir: Option<TempDir>;
+        let csv_path = if file.ends_with(".zip") {
+            tempdir = Some(TempDir::new().context(IoSnafu { filename: file })?);
+            extract_csv_file(file, &resource_path.to_owned(), &tempdir)?
+        } else {
+            tempdir = None;
+            get_path(file, resource_path, options)?
+        };
+        let _keep_tempdir = &tempdir;
+
+        let identity = part_field_names.len() == output_fields.len()
+            && part_field_names
+                .iter()
+                .zip(&output_fields)
+                .all(|(a, b)| *a == b.as_str());
+
+        // Fast path: when the part's columns already match the merged order and
+        // its dialect matches the default output writer, the part body is exactly
+        // what we'd re-emit. Custom dialects still need parsing so the output is
+        // consistently comma-delimited.
+        if identity && can_copy_csv_body(options, part_resource) {
+            let mut file = writer
+                .into_inner()
+                .map_err(|e| e.into_error())
+                .context(IoSnafu {
+                    filename: resource_path,
+                })?;
+            copy_body_after_header(&csv_path, &mut file)?;
+            writer = Writer::from_writer(file);
+        } else {
+            let mut resource_fields = HashMap::new();
+            for (num, name) in part_field_names.iter().enumerate() {
+                resource_fields.insert((*name).to_owned(), num);
+            }
+            let csv_reader = get_csv_reader_builder(options, part_resource)
+                .from_path(&csv_path)
+                .unwrap();
+            writer = write_merged_csv(csv_reader, writer, &resource_fields, &output_fields)?;
+        }
+
+        if options.delete_input_csv {
+            std::fs::remove_file(&csv_path).context(IoSnafu {
+                filename: csv_path.to_string_lossy(),
+            })?;
+        }
+    }
+
+    writer.flush().context(IoSnafu {
+        filename: resource_path,
+    })?;
+    Ok(())
+}
+
+/// Append a part CSV's body (everything after its one header line) to `out`,
+/// byte-for-byte. The header is a single physical line (field names never
+/// contain newlines), so read_until('\n') consumes it; io::copy moves the rest.
+fn copy_body_after_header(csv_path: &std::path::Path, out: &mut File) -> Result<(), Error> {
+    use std::io::BufRead;
+    let mut reader = BufReader::new(File::open(csv_path).context(IoSnafu {
+        filename: csv_path.to_string_lossy(),
+    })?);
+    let mut header = Vec::new();
+    reader.read_until(b'\n', &mut header).context(IoSnafu {
+        filename: csv_path.to_string_lossy(),
+    })?;
+    std::io::copy(&mut reader, out).context(IoSnafu {
+        filename: csv_path.to_string_lossy(),
+    })?;
+    Ok(())
+}
+
+fn can_copy_csv_body(options: &Options, resource: &Value) -> bool {
+    let (delimiter, quote, double_quote) = csv_dialect(options, resource);
+    delimiter == b','
+        && quote == b'"'
+        && double_quote
+        && options.escape.is_none()
+        && options.comment.is_none()
+}
+
+fn extract_csv_file(
+    file: &String,
+    resource_path: &String,
+    tempdir: &Option<TempDir>,
+) -> Result<PathBuf, Error> {
     let zip_file = File::open(file).context(IoSnafu { filename: file })?;
     let mut zip = zip::ZipArchive::new(zip_file).context(ZipSnafu { filename: file })?;
     let mut zipped_file = zip
@@ -605,6 +673,19 @@ fn extract_csv_file(file: &String, resource_path: &String, tempdir: &Option<Temp
 
 fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBuilder {
     let mut reader_builder = ReaderBuilder::new();
+    let (delimiter, quote, double_quote) = csv_dialect(options, resource);
+
+    reader_builder
+        .delimiter(delimiter)
+        .quote(quote)
+        .double_quote(double_quote)
+        .escape(options.escape)
+        .comment(options.comment);
+
+    reader_builder
+}
+
+fn csv_dialect(options: &Options, resource: &Value) -> (u8, u8, bool) {
     let mut delimiter = options.delimiter.unwrap_or(b',');
     if let Some(dialect_delimiter) = resource["dialect"]["delimiter"].as_str() {
         if dialect_delimiter.as_bytes().len() == 1 {
@@ -624,14 +705,7 @@ fn get_csv_reader_builder(options: &Options, resource: &Value) -> csv::ReaderBui
         double_quote = dialect_double_quote
     };
 
-    reader_builder
-        .delimiter(delimiter)
-        .quote(quote)
-        .double_quote(double_quote)
-        .escape(options.escape)
-        .comment(options.comment);
-
-    reader_builder
+    (delimiter, quote, double_quote)
 }
 
 fn rand() -> String {
@@ -995,7 +1069,7 @@ pub fn datapackage_to_sqlite_with_options(
 ) -> Result<(), Error> {
     let (table_to_schema, ordered_tables) = get_table_info(&datapackage, &options)?;
 
-    let mut conn= if !db_path.is_empty() {
+    let mut conn = if !db_path.is_empty() {
         Some(Connection::open(&db_path).context(RusqliteSnafu {
             message: "Error opening connection: ",
         })?)
@@ -1003,11 +1077,13 @@ pub fn datapackage_to_sqlite_with_options(
         None
     };
 
-    let mut dump_writer: Option<Box<dyn Write>> =  if !options.dump_file.is_empty() {
+    let mut dump_writer: Option<Box<dyn Write>> = if !options.dump_file.is_empty() {
         if options.dump_file == "-" {
             Some(Box::new(std::io::stdout()))
         } else {
-            Some(Box::new(File::create(&options.dump_file).context(WriteSnafu {filename: db_path})?))
+            Some(Box::new(
+                File::create(&options.dump_file).context(WriteSnafu { filename: db_path })?,
+            ))
         }
     } else {
         None
@@ -1019,23 +1095,22 @@ pub fn datapackage_to_sqlite_with_options(
          PRAGMA temp_store = MEMORY;";
 
     if let Some(conn) = conn.as_mut() {
-        conn.execute_batch(
-            pragmas
-        )
-        .context(RusqliteSnafu {
+        conn.execute_batch(pragmas).context(RusqliteSnafu {
             message: "Error executing pragmas: ",
         })?;
     };
 
-
     if let Some(dump_writer) = dump_writer.as_mut() {
-        writeln!(dump_writer, "{pragmas}").context(IoSnafu {filename: &options.dump_file})?;
-        writeln!(dump_writer, ".mode csv").context(IoSnafu {filename: &options.dump_file})?;
+        writeln!(dump_writer, "{pragmas}").context(IoSnafu {
+            filename: &options.dump_file,
+        })?;
+        writeln!(dump_writer, ".mode csv").context(IoSnafu {
+            filename: &options.dump_file,
+        })?;
     }
 
     for table in ordered_tables {
         let resource = table_to_schema.get(&table).unwrap();
-
 
         let mut existing_columns: HashMap<String, String> = HashMap::new();
 
@@ -1072,15 +1147,14 @@ pub fn datapackage_to_sqlite_with_options(
                     .context(RusqliteSnafu {
                         message: "Error making sqlite tables: ",
                     })?;
-                }
-
+            }
         }
 
         let mut create = false;
 
         if existing_columns.is_empty() {
             create = true
-        } 
+        }
 
         if options.drop {
             if let Some(conn) = conn.as_mut() {
@@ -1091,7 +1165,9 @@ pub fn datapackage_to_sqlite_with_options(
                 create = true
             }
             if let Some(dump_writer) = dump_writer.as_mut() {
-                writeln!(dump_writer, "drop table if exists [{table}];").context(IoSnafu {filename: &options.dump_file})?;
+                writeln!(dump_writer, "drop table if exists [{table}];").context(IoSnafu {
+                    filename: &options.dump_file,
+                })?;
             }
         }
 
@@ -1110,12 +1186,15 @@ pub fn datapackage_to_sqlite_with_options(
                 // `execute_batch`. Since rusqlite 0.40, `execute` prepares the
                 // trailing statement eagerly and fails with "no such table"
                 // because the CREATE TABLE has not run yet.
-                conn.execute_batch(&resource_sqlite).context(RusqliteSnafu {
-                    message: "Error making sqlite tables: ",
-                })?;
+                conn.execute_batch(&resource_sqlite)
+                    .context(RusqliteSnafu {
+                        message: "Error making sqlite tables: ",
+                    })?;
             }
             if let Some(dump_writer) = dump_writer.as_mut() {
-                writeln!(dump_writer, "{}", &resource_sqlite).context(IoSnafu {filename: &options.dump_file})?;
+                writeln!(dump_writer, "{}", &resource_sqlite).context(IoSnafu {
+                    filename: &options.dump_file,
+                })?;
             }
         } else if options.evolve {
             let (add_columns, _alter_columns) = get_column_changes(resource, existing_columns);
@@ -1127,7 +1206,11 @@ pub fn datapackage_to_sqlite_with_options(
                         })?;
                 }
                 if let Some(dump_writer) = dump_writer.as_mut() {
-                    writeln!(dump_writer, "ALTER TABLE {table} ADD [{name}] {type_}").context(IoSnafu {filename: &options.dump_file})?;
+                    writeln!(dump_writer, "ALTER TABLE {table} ADD [{name}] {type_}").context(
+                        IoSnafu {
+                            filename: &options.dump_file,
+                        },
+                    )?;
                 }
             }
         }
@@ -1135,18 +1218,26 @@ pub fn datapackage_to_sqlite_with_options(
         let resource_path = resource["path"].as_str().unwrap();
 
         if let Some(conn) = conn.as_mut() {
-
             let tempdir: Option<TempDir>;
 
             let csv_path = if datapackage.ends_with(".zip") {
-                tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
-                extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+                tempdir = Some(TempDir::new().context(IoSnafu {
+                    filename: &datapackage,
+                })?);
+                extract_csv_file(
+                    &datapackage.to_string(),
+                    &resource_path.to_owned(),
+                    &tempdir,
+                )?
             } else {
                 get_path(&datapackage, resource_path, &options)?
             };
 
-            let csv_reader =
-                get_csv_reader_builder(&options, resource).from_path(&csv_path).context(CSVSnafu { filename: csv_path.to_string_lossy().to_owned() })?;
+            let csv_reader = get_csv_reader_builder(&options, resource)
+                .from_path(&csv_path)
+                .context(CSVSnafu {
+                    filename: csv_path.to_string_lossy().to_owned(),
+                })?;
             insert_sql_data(csv_reader, conn, resource.clone())?;
 
             if options.delete_input_csv {
@@ -1158,7 +1249,11 @@ pub fn datapackage_to_sqlite_with_options(
 
         if let Some(dump_writer) = dump_writer.as_mut() {
             let table_value = json!(table);
-            let table_name = resource.get("title").unwrap_or(resource.get("name").unwrap_or(&table_value)).as_str().unwrap_or(&table);
+            let table_name = resource
+                .get("title")
+                .unwrap_or(resource.get("name").unwrap_or(&table_value))
+                .as_str()
+                .unwrap_or(&table);
 
             let mut delimiter_u8 = options.delimiter.unwrap_or(b',');
 
@@ -1172,10 +1267,17 @@ pub fn datapackage_to_sqlite_with_options(
                 .context(DelimeiterSnafu {})?
                 .to_owned();
 
-            writeln!(dump_writer, ".separator '{delimiter}'").context(IoSnafu {filename: &options.dump_file})?;
-            writeln!(dump_writer, ".import '{resource_path}' {table_name} --skip 1 ").context(IoSnafu {filename: &options.dump_file})?;
+            writeln!(dump_writer, ".separator '{delimiter}'").context(IoSnafu {
+                filename: &options.dump_file,
+            })?;
+            writeln!(
+                dump_writer,
+                ".import '{resource_path}' {table_name} --skip 1 "
+            )
+            .context(IoSnafu {
+                filename: &options.dump_file,
+            })?;
         }
-
     }
 
     Ok(())
@@ -1221,7 +1323,8 @@ fn get_table_info(
             table_to_schema.insert(table_name.to_owned(), resource.clone());
         }
     }
-    let mut relationhip_graph = petgraph::graphmap::DiGraphMap::<_, _, std::hash::RandomState>::new();
+    let mut relationhip_graph =
+        petgraph::graphmap::DiGraphMap::<_, _, std::hash::RandomState>::new();
     for (x, y) in table_links.iter() {
         relationhip_graph.add_edge(y, x, 1);
     }
@@ -1233,7 +1336,6 @@ fn get_table_info(
         .collect();
     Ok((table_to_schema, tables))
 }
-
 
 #[cfg(feature = "parquet")]
 fn create_parquet(
@@ -1296,7 +1398,7 @@ fn create_parquet(
                 } else {
                     Field::new(name, DataType::Utf8, true)
                 }
-            },
+            }
             _ => Field::new(name, DataType::Utf8, true),
         };
         arrow_fields.push(field);
@@ -1309,12 +1411,16 @@ fn create_parquet(
         }
     };
 
-    let file = File::open(file.clone()).context(IoSnafu { filename: file.to_string_lossy().to_string() })?;
+    let file = File::open(file.clone()).context(IoSnafu {
+        filename: file.to_string_lossy().to_string(),
+    })?;
 
     let arrow_csv_reader = ArrowReaderBuilder::new(std::sync::Arc::new(Schema::new(arrow_fields)))
         .with_header(true)
         .with_delimiter(delimiter)
-        .with_batch_size(1024).build(file).context(ArrowSnafu {})?;
+        .with_batch_size(1024)
+        .build(file)
+        .context(ArrowSnafu {})?;
 
     let props = WriterProperties::builder()
         .set_dictionary_enabled(false)
@@ -1417,13 +1523,24 @@ pub fn datapackage_to_parquet_with_options(
         let tempdir: Option<TempDir>;
 
         let csv_path = if datapackage.ends_with(".zip") {
-            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
-            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+            tempdir = Some(TempDir::new().context(IoSnafu {
+                filename: &datapackage,
+            })?);
+            extract_csv_file(
+                &datapackage.to_string(),
+                &resource_path.to_owned(),
+                &tempdir,
+            )?
         } else {
             get_path(&datapackage, resource_path, &options)?
         };
 
-        create_parquet(csv_path.clone(), resource.clone(), output_path.clone(), &options)?;
+        create_parquet(
+            csv_path.clone(),
+            resource.clone(),
+            output_path.clone(),
+            &options,
+        )?;
 
         if options.delete_input_csv {
             std::fs::remove_file(&csv_path).context(IoSnafu {
@@ -1518,7 +1635,6 @@ fn create_sheet(
     let worksheet = workbook.add_worksheet_with_low_memory();
     worksheet.set_name(&new_title).context(XLSXSnafu {})?;
 
-
     for (row_num, row) in csv_reader.into_records().enumerate() {
         let this_row = row.context(CSVSnafu { filename: &title })?;
 
@@ -1555,7 +1671,9 @@ fn create_sheet(
                             )
                             .context(XLSXSnafu {})?;
                     } else {
-                        log::warn!("Skipping number \"{number}\" as it is not allowed in XLSX format");
+                        log::warn!(
+                            "Skipping number \"{number}\" as it is not allowed in XLSX format"
+                        );
                     }
                     continue;
                 }
@@ -1566,7 +1684,9 @@ fn create_sheet(
             }
 
             if cell.len() > 32767 {
-                log::warn!("WARNING: Cell larger than 32767 chararcters which is too large for XLSX format. The cell will be truncated, so some data will be missing.");
+                log::warn!(
+                    "WARNING: Cell larger than 32767 chararcters which is too large for XLSX format. The cell will be truncated, so some data will be missing."
+                );
                 let mut index: usize = 32767;
                 while !cell.is_char_boundary(index) {
                     index -= 1;
@@ -1661,15 +1781,24 @@ pub fn datapackage_to_xlsx_with_options(
         let tempdir: Option<TempDir>;
 
         let csv_path = if datapackage.ends_with(".zip") {
-            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
-            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+            tempdir = Some(TempDir::new().context(IoSnafu {
+                filename: &datapackage,
+            })?);
+            extract_csv_file(
+                &datapackage.to_string(),
+                &resource_path.to_owned(),
+                &tempdir,
+            )?
         } else {
             get_path(&datapackage, resource_path, &options)?
         };
 
         let csv_reader = get_csv_reader_builder(&options, resource)
             .has_headers(false)
-            .from_path(&csv_path).context(CSVSnafu {filename: csv_path.to_string_lossy().to_string()})?;
+            .from_path(&csv_path)
+            .context(CSVSnafu {
+                filename: csv_path.to_string_lossy().to_string(),
+            })?;
 
         if options.delete_input_csv {
             std::fs::remove_file(&csv_path).context(IoSnafu {
@@ -1727,7 +1856,6 @@ pub fn datapackage_to_postgres(postgres_url: String, datapackage: String) -> Res
     datapackage_to_postgres_with_options(postgres_url, datapackage, options)
 }
 
-
 pub fn datapackage_to_postgres_with_options(
     postgres_url: String,
     datapackage: String,
@@ -1753,17 +1881,21 @@ pub fn datapackage_to_postgres_with_options(
         }
     }
 
-    let mut client= if !postgres_url.is_empty() {
+    let mut client = if !postgres_url.is_empty() {
         Some(Client::connect(&conf, NoTls).context(PostgresSnafu {})?)
     } else {
         None
     };
 
-    let mut dump_writer: Option<Box<dyn Write>> =  if !options.dump_file.is_empty() {
+    let mut dump_writer: Option<Box<dyn Write>> = if !options.dump_file.is_empty() {
         if options.dump_file == "-" {
             Some(Box::new(std::io::stdout()))
         } else {
-            Some(Box::new(File::create(&options.dump_file).context(WriteSnafu {filename: postgres_url})?))
+            Some(Box::new(File::create(&options.dump_file).context(
+                WriteSnafu {
+                    filename: postgres_url,
+                },
+            )?))
         }
     } else {
         None
@@ -1787,7 +1919,7 @@ pub fn datapackage_to_postgres_with_options(
 
         if !options.schema.is_empty() {
             resource_postgres = format!(
-r#"
+                r#"
 CREATE SCHEMA IF NOT EXISTS "{schema}";
 set search_path = "{schema}";
 {resource_postgres};
@@ -1806,7 +1938,6 @@ set search_path = "{schema}";
             let exists: Option<String> = result.get(0);
             create = exists.is_none();
         }
-
 
         let mut drop = options.drop;
 
@@ -1852,7 +1983,9 @@ set search_path = "{schema}";
             write!(drop_statement, "DROP TABLE IF EXISTS \"{table}\" CASCADE;").unwrap();
             if let Some(client) = client.as_mut() {
                 if let Some(dump_writer) = dump_writer.as_mut() {
-                    writeln!(dump_writer, "{drop_statement}").context(IoSnafu {filename: &options.dump_file})?;
+                    writeln!(dump_writer, "{drop_statement}").context(IoSnafu {
+                        filename: &options.dump_file,
+                    })?;
                 }
                 client
                     .batch_execute(&drop_statement)
@@ -1862,7 +1995,9 @@ set search_path = "{schema}";
 
         if create {
             if let Some(dump_writer) = dump_writer.as_mut() {
-                writeln!(dump_writer, "{resource_postgres}").context(IoSnafu {filename: &options.dump_file})?;
+                writeln!(dump_writer, "{resource_postgres}").context(IoSnafu {
+                    filename: &options.dump_file,
+                })?;
             }
             if let Some(client) = client.as_mut() {
                 client
@@ -1890,7 +2025,13 @@ set search_path = "{schema}";
             for (name, type_) in add_columns {
                 if let Some(client) = client.as_mut() {
                     if let Some(dump_writer) = dump_writer.as_mut() {
-                        writeln!(dump_writer, "ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}").context(IoSnafu {filename: &options.dump_file})?;
+                        writeln!(
+                            dump_writer,
+                            "ALTER TABLE {schema_table} ADD COLUMN \"{name}\" {type_}"
+                        )
+                        .context(IoSnafu {
+                            filename: &options.dump_file,
+                        })?;
                     }
                     client
                         .batch_execute(&format!(
@@ -1903,7 +2044,13 @@ set search_path = "{schema}";
             for name in alter_columns {
                 if let Some(client) = client.as_mut() {
                     if let Some(dump_writer) = dump_writer.as_mut() {
-                        writeln!(dump_writer, "ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT").context(IoSnafu {filename: &options.dump_file})?;
+                        writeln!(
+                            dump_writer,
+                            "ALTER TABLE {schema_table} ALTER COLUMN \"{name}\" TYPE TEXT"
+                        )
+                        .context(IoSnafu {
+                            filename: &options.dump_file,
+                        })?;
                     }
                     client
                         .batch_execute(&format!(
@@ -1913,7 +2060,6 @@ set search_path = "{schema}";
                 }
             }
         }
-
 
         let mut delimiter_u8 = options.delimiter.unwrap_or(b',');
 
@@ -1938,10 +2084,14 @@ set search_path = "{schema}";
             .context(DelimeiterSnafu {})?
             .to_owned();
 
-        let query = format!("copy {schema_table}({all_columns}) from STDIN WITH (FORMAT CSV, HEADER, QUOTE '{quote}', DELIMITER '{delimiter}', FORCE_NULL ({all_columns}))");
+        let query = format!(
+            "copy {schema_table}({all_columns}) from STDIN WITH (FORMAT CSV, HEADER, QUOTE '{quote}', DELIMITER '{delimiter}', FORCE_NULL ({all_columns}))"
+        );
 
         if let Some(dump_writer) = dump_writer.as_mut() {
-            let full_path = canonicalize(resource_path).context(IoSnafu {filename: resource_path})?;
+            let full_path = canonicalize(resource_path).context(IoSnafu {
+                filename: resource_path,
+            })?;
             let full_path = full_path.to_string_lossy();
             writeln!(dump_writer, "\\copy {schema_table}({all_columns}) from '{full_path}' WITH (FORMAT CSV, HEADER, QUOTE '{quote}', DELIMITER '{delimiter}', FORCE_NULL ({all_columns}))").context(IoSnafu {filename: &options.dump_file})?;
         }
@@ -1949,8 +2099,14 @@ set search_path = "{schema}";
         let tempdir: Option<TempDir>;
 
         let csv_path = if datapackage.ends_with(".zip") {
-            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
-            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+            tempdir = Some(TempDir::new().context(IoSnafu {
+                filename: &datapackage,
+            })?);
+            extract_csv_file(
+                &datapackage.to_string(),
+                &resource_path.to_owned(),
+                &tempdir,
+            )?
         } else {
             get_path(&datapackage, resource_path, &options)?
         };
@@ -2014,7 +2170,6 @@ fn get_column_changes(
     (add_columns, alter_columns)
 }
 
-
 fn create_ods_sheet(
     csv_reader: csv::Reader<impl std::io::Read>,
     resource: Value,
@@ -2027,7 +2182,6 @@ fn create_ods_sheet(
 
     let base_format = spreadsheet_ods::CellStyle::new_empty();
     let base_format_ref = workbook.add_cellstyle(base_format);
-
 
     let mut field_types = vec![];
     if let Some(fields_vec) = resource["schema"]["fields"].as_array() {
@@ -2096,9 +2250,15 @@ fn create_ods_sheet(
             if ["number", "integer"].contains(&field_types[col_index].as_str()) {
                 if let Ok(number) = value.parse::<f64>() {
                     if number.is_finite() {
-                        worksheet.set_value(row_num.try_into().unwrap(), col_index.try_into().unwrap(), number);
+                        worksheet.set_value(
+                            row_num.try_into().unwrap(),
+                            col_index.try_into().unwrap(),
+                            number,
+                        );
                     } else {
-                        log::warn!("Skipping number \"{number}\" as it is not allowed in ods format");
+                        log::warn!(
+                            "Skipping number \"{number}\" as it is not allowed in ods format"
+                        );
                     }
                     continue;
                 }
@@ -2109,7 +2269,9 @@ fn create_ods_sheet(
             }
 
             if cell.len() > 32767 {
-                log::warn!("WARNING: Cell larger than 32767 chararcters which is too large for ods format. The cell will be truncated, so some data will be missing.");
+                log::warn!(
+                    "WARNING: Cell larger than 32767 chararcters which is too large for ods format. The cell will be truncated, so some data will be missing."
+                );
                 let mut index: usize = 32767;
                 while !cell.is_char_boundary(index) {
                     index -= 1;
@@ -2117,13 +2279,12 @@ fn create_ods_sheet(
                 cell.truncate(index)
             }
 
-            worksheet
-                .set_styled_value(
-                    row_num.try_into().expect("already tested length of string"),
-                    col_index.try_into().expect("already checked field count"),
-                    &cell,
-                    &format,
-                );
+            worksheet.set_styled_value(
+                row_num.try_into().expect("already tested length of string"),
+                col_index.try_into().expect("already checked field count"),
+                &cell,
+                &format,
+            );
         }
     }
 
@@ -2204,15 +2365,24 @@ pub fn datapackage_to_ods_with_options(
         let tempdir: Option<TempDir>;
 
         let csv_path = if datapackage.ends_with(".zip") {
-            tempdir = Some(TempDir::new().context(IoSnafu { filename: &datapackage })?);
-            extract_csv_file(&datapackage.to_string(), &resource_path.to_owned(), &tempdir)?
+            tempdir = Some(TempDir::new().context(IoSnafu {
+                filename: &datapackage,
+            })?);
+            extract_csv_file(
+                &datapackage.to_string(),
+                &resource_path.to_owned(),
+                &tempdir,
+            )?
         } else {
             get_path(&datapackage, resource_path, &options)?
         };
 
         let csv_reader = get_csv_reader_builder(&options, resource)
             .has_headers(false)
-            .from_path(&csv_path).context(CSVSnafu {filename: csv_path.to_string_lossy().to_string()})?;
+            .from_path(&csv_path)
+            .context(CSVSnafu {
+                filename: csv_path.to_string_lossy().to_string(),
+            })?;
 
         if options.delete_input_csv {
             std::fs::remove_file(&csv_path).context(IoSnafu {
@@ -2227,15 +2397,13 @@ pub fn datapackage_to_ods_with_options(
     Ok(())
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use parquet::file::reader::SerializedFileReader;
     use rusqlite::types::ValueRef;
     use std::io::BufRead;
-    use parquet::file::reader::SerializedFileReader;
 
     fn test_merged_csv_output(tmp: &PathBuf, name: String) {
         let csv_dir = tmp.join("csv");
@@ -2318,9 +2486,60 @@ mod tests {
         }
     }
 
+    fn write_semicolon_datapackage(path: &std::path::Path, row: &str) {
+        std::fs::create_dir_all(path.join("csv")).unwrap();
+        std::fs::write(path.join("csv/games.csv"), format!("id;name\n{row}\n")).unwrap();
+
+        let datapackage = json!({
+            "resources": [{
+                "name": "games",
+                "path": "csv/games.csv",
+                "dialect": {
+                    "delimiter": ";"
+                },
+                "schema": {
+                    "fields": [
+                        {"name": "id", "type": "integer", "count": 1},
+                        {"name": "name", "type": "string", "count": 1}
+                    ]
+                }
+            }]
+        });
+        let writer = File::create(path.join("datapackage.json")).unwrap();
+        serde_json::to_writer_pretty(writer, &datapackage).unwrap();
+    }
+
     #[test]
     fn test_datapackage_merge_self() {
         test_datapackage_merge("base", "base_datapackage", "base_datapackage");
+    }
+
+    #[test]
+    fn test_datapackage_merge_custom_delimiter() {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp = tmp_dir.path();
+        let part_one = tmp.join("part_one");
+        let part_two = tmp.join("part_two");
+        let output = tmp.join("output");
+
+        write_semicolon_datapackage(&part_one, "1;Ada");
+        write_semicolon_datapackage(&part_two, "2;Bert");
+
+        merge_datapackage(
+            output.clone(),
+            vec![
+                part_one.to_string_lossy().into_owned(),
+                part_two.to_string_lossy().into_owned(),
+            ],
+        )
+        .unwrap();
+
+        let file = File::open(output.join("csv/games.csv")).unwrap();
+        let lines: Vec<String> = std::io::BufReader::new(file)
+            .lines()
+            .map(|x| x.unwrap())
+            .collect();
+        assert_eq!(lines, vec!["id,name", "1,Ada", "2,Bert"]);
     }
 
     #[test]
@@ -2486,7 +2705,6 @@ mod tests {
         .unwrap();
     }
 
-
     #[test]
     fn test_xlsx_from_csvs() {
         let tmp_dir = TempDir::new().unwrap();
@@ -2568,7 +2786,6 @@ mod tests {
         .unwrap();
     }
 
-
     #[test]
     fn test_xlsx() {
         let tmp_dir = TempDir::new().unwrap();
@@ -2631,15 +2848,17 @@ mod tests {
 
     #[test]
     fn test_multiple() {
-        insta::assert_yaml_snapshot!(merge_datapackage_jsons(vec![
-            "fixtures/base_datapackage/datapackage.json".into(),
-            "fixtures/base_datapackage/datapackage.json".into(),
-            "fixtures/add_different_resource/datapackage.json".into(),
-            "fixtures/add_resource/datapackage.json".into(),
-            "fixtures/add_field/datapackage.json".into(),
-            "fixtures/conflict_types/datapackage.json".into()
-        ])
-        .unwrap());
+        insta::assert_yaml_snapshot!(
+            merge_datapackage_jsons(vec![
+                "fixtures/base_datapackage/datapackage.json".into(),
+                "fixtures/base_datapackage/datapackage.json".into(),
+                "fixtures/add_different_resource/datapackage.json".into(),
+                "fixtures/add_resource/datapackage.json".into(),
+                "fixtures/add_field/datapackage.json".into(),
+                "fixtures/conflict_types/datapackage.json".into()
+            ])
+            .unwrap()
+        );
     }
 
     #[test]
@@ -2659,7 +2878,10 @@ mod tests {
 
     #[test]
     fn test_csvs_db_no_conn() {
-        let options = Options::builder().drop(true).dump_file("/tmp/postgres_dump.sql".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .dump_file("/tmp/postgres_dump.sql".into())
+            .build();
 
         csvs_to_postgres_with_options(
             "".into(),
@@ -2758,7 +2980,6 @@ mod tests {
 
     //     csvs_to_postgres_with_options("postgresql://test@localhost/test".into(), vec!["src/fixtures/date.csv".into()], options).unwrap();
     // }
-
 
     #[test]
     fn test_drop_postgres() {
@@ -2932,7 +3153,10 @@ mod tests {
 
     #[test]
     fn test_csvs_sqlite_no_conn() {
-        let options = Options::builder().drop(true).dump_file("/tmp/sqlite_dump.sql".into()).build();
+        let options = Options::builder()
+            .drop(true)
+            .dump_file("/tmp/sqlite_dump.sql".into())
+            .build();
 
         csvs_to_sqlite_with_options(
             "".into(),
@@ -2943,7 +3167,7 @@ mod tests {
             options,
         )
         .unwrap();
-        
+
         let file = File::open("/tmp/sqlite_dump.sql").unwrap();
         let lines: Vec<String> = std::io::BufReader::new(file)
             .lines()
@@ -3026,7 +3250,7 @@ mod tests {
         output
     }
 
-        #[test]
+    #[test]
     fn test_parquet() {
         let tmp_dir = TempDir::new().unwrap();
         let tmp = tmp_dir.path().to_owned();
@@ -3167,4 +3391,3 @@ mod tests {
         .unwrap();
     }
 }
-

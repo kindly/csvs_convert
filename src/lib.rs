@@ -31,27 +31,24 @@ mod describer;
 mod zip_dir;
 
 pub use describe::{
-    describe_files, make_datapackage, output_datapackage, DescribeError, Options as DescribeOptions,
+    DescribeError, Options as DescribeOptions, describe_files, make_datapackage, output_datapackage,
 };
 pub use describer::{Describer, Options as DescriberOptions};
 
 #[cfg(feature = "converters")]
 #[cfg(not(target_family = "wasm"))]
 pub use converters::{
-    csvs_to_postgres, csvs_to_postgres_with_options,
-    csvs_to_sqlite, csvs_to_sqlite_with_options, csvs_to_xlsx, csvs_to_xlsx_with_options,
-    csvs_to_ods, csvs_to_ods_with_options,
-    datapackage_to_postgres,
-    datapackage_to_postgres_with_options, datapackage_to_sqlite,
+    Error, Options, csvs_to_ods, csvs_to_ods_with_options, csvs_to_postgres,
+    csvs_to_postgres_with_options, csvs_to_sqlite, csvs_to_sqlite_with_options, csvs_to_xlsx,
+    csvs_to_xlsx_with_options, datapackage_to_ods, datapackage_to_ods_with_options,
+    datapackage_to_postgres, datapackage_to_postgres_with_options, datapackage_to_sqlite,
     datapackage_to_sqlite_with_options, datapackage_to_xlsx, datapackage_to_xlsx_with_options,
-    datapackage_to_ods, datapackage_to_ods_with_options,
     merge_datapackage, merge_datapackage_jsons, merge_datapackage_with_options,
-    Error, Options
 };
 
 #[cfg(feature = "parquet")]
 #[cfg(not(target_family = "wasm"))]
 pub use converters::{
-    csvs_to_parquet, csvs_to_parquet_with_options, 
-    datapackage_to_parquet, datapackage_to_parquet_with_options};
-
+    csvs_to_parquet, csvs_to_parquet_with_options, datapackage_to_parquet,
+    datapackage_to_parquet_with_options,
+};

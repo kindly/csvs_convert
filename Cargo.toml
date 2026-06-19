@@ -1,6 +1,6 @@
 [package]
 name = "csvs_convert"
-version = "0.13.1"
+version = "0.13.2"
 edition = "2024"
 
 description = "Some Datapackage Conversion"
@@ -38,6 +38,7 @@ counter = "0.7.1"
 crossbeam-channel = "0.5.15"
 csv-index = "0.1.6"
 threadpool = "1.8.1"
+rayon = "1"
 log = "0.4.30"
 
 parquet = { version = "58.3.0", default-features = false, features = ["arrow", "snap"], optional = true }

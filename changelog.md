@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.13.2] - 2026-06-19
+
+### Changed
+
+- Improve datapackage merge performance by parallelising resource merges and byte-copying CSV bodies when field order already matches.
+
 ## [0.13.0] - 2026-06-02
 
 ### Changed

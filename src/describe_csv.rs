@@ -2,7 +2,7 @@ use crate::describe::Describer;
 use crate::describer::Options;
 use crossbeam_channel::unbounded;
 use csv::Reader;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 pub fn describe(mut reader: Reader<std::fs::File>, options: Options) -> Result<Value, csv::Error> {
@@ -165,7 +165,7 @@ pub fn describe_parallel(
 
 #[cfg(test)]
 mod tests {
-    use crate::describe_csv::{describe, describe_parallel, Options};
+    use crate::describe_csv::{Options, describe, describe_parallel};
 
     #[test]
     fn all_types() {

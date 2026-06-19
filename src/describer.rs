@@ -6,8 +6,8 @@ use std::cmp::{max, min};
 use std::collections::HashSet;
 use typed_builder::TypedBuilder;
 
-use chrono::prelude::*;
 use chrono::DateTime;
+use chrono::prelude::*;
 
 use serde_json::json;
 
@@ -477,18 +477,18 @@ impl Describer {
 
     fn check_integer(&mut self, string: &str) -> bool {
         if string.len() > 1 && string.starts_with("0") {
-            return false
+            return false;
         }
         string.parse::<i64>().is_ok()
     }
 
     fn check_number(&mut self, string: &str) -> Option<f64> {
         if string.len() > 1 && string.starts_with("0") && !string.starts_with("0.") {
-            return None
+            return None;
         }
         // floats this large loose precision
         if string.len() > 17 {
-            return None
+            return None;
         }
         string.parse().ok()
     }
@@ -550,7 +550,7 @@ impl Describer {
 #[cfg(test)]
 mod tests {
     use super::*; //, datetime_formats, datetime_tz_formats, date_formats};
-                  //use chrono::prelude::*;
+    //use chrono::prelude::*;
 
     #[test]
     fn guess_bool() {
