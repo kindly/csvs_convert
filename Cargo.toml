@@ -41,8 +41,8 @@ threadpool = "1.8.1"
 rayon = "1"
 log = "0.4.30"
 
-parquet = { version = "58.3.0", default-features = false, features = ["arrow", "snap"], optional = true }
-arrow = { version = "58.3.0", default-features = false, features = ["csv"], optional = true }
+parquet = { version = "60.0", default-features = false, features = ["arrow", "snap"], optional = true }
+arrow = { version = "60.0", default-features = false, features = ["csv"], optional = true }
 spreadsheet-ods = "1.0.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -51,7 +51,7 @@ minijinja = { version = "3.0", features = ["serde"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 rand = "0.10"
-rust_xlsxwriter = { version = "0.98", features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 
 [patch.crates-io]
 # use patched fork of spreadsheet-ods with updated deps; fixing RUSTSEC advisory on quick-xml
