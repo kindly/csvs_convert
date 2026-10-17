@@ -1634,7 +1634,9 @@ fn create_sheet(
 
     let new_title = truncate_xlsx_title(title.clone(), &options.seperator);
 
-    let worksheet = workbook.add_worksheet_with_low_memory();
+    let worksheet = workbook
+        .add_worksheet_with_low_memory()
+        .context(XLSXSnafu {})?;
     worksheet.set_name(&new_title).context(XLSXSnafu {})?;
 
     for (row_num, row) in csv_reader.into_records().enumerate() {
