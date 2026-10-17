@@ -761,25 +761,25 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
         {% if schema.primaryKey is string %}
            , PRIMARY KEY ([{{schema.primaryKey}}]) #nl
         {% endif %}
-        {% if schema.primaryKey is sequence %}
+        {% if schema.primaryKey is defined and schema.primaryKey is sequence %}
            , PRIMARY KEY ([{{schema.primaryKey | join("],[")}}]) #nl
         {% endif %}
-        {% if schema.foreignKeys is sequence %}
+        {% if schema.foreignKeys is defined and schema.foreignKeys is sequence %}
            {% for foreignKey in schema.foreignKeys %}
               {% if foreignKey.fields is string %}
-                , FOREIGN KEY ([{{foreignKey.fields}}]) REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields}}]) #nl {% endif %} {% if foreignKey.fields is sequence %} , FOREIGN KEY ([{{foreignKey.fields | join("],[")}}])
+                , FOREIGN KEY ([{{foreignKey.fields}}]) REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields}}]) #nl {% endif %} {% if foreignKey.fields is defined and foreignKey.fields is sequence %} , FOREIGN KEY ([{{foreignKey.fields | join("],[")}}])
                   REFERENCES [{{foreignKey.reference.resource}}]([{{foreignKey.reference.fields | join("],[")}}]) #nl
               {% endif %}
            {% endfor %}
         {% endif %}
     ); #nl
 
-    {% if schema.foreignKeys is sequence %}
+    {% if schema.foreignKeys is defined and schema.foreignKeys is sequence %}
         {% for foreignKey in schema.foreignKeys %}
             {% if foreignKey.fields is string %}
               CREATE INDEX [idx_{{name}}_{{foreignKey.fields}}] ON [{{title|default(name)}}] ([{{foreignKey.fields}}]); #nl
             {% endif %}
-            {% if foreignKey.fields is sequence %}
+            {% if foreignKey.fields is defined and foreignKey.fields is sequence %}
               CREATE INDEX [idx_{{name}}_{{foreignKey.fields | join("_")}}] ON [{{title|default(name)}}] ([{{foreignKey.fields | join("],[")}}]); #nl
             {% endif %}
         {% endfor %}
@@ -794,7 +794,8 @@ fn render_sqlite_table(value: Value) -> Result<String, Error> {
     env.add_function("to_db_type", to_db_type);
     env.add_template("sqlite_resource", &sqlite_table).unwrap();
     let tmpl = env.get_template("sqlite_resource").unwrap();
-    tmpl.render(value).context(JinjaSnafu {})
+    tmpl.render(minijinja::value::Serde(value))
+        .context(JinjaSnafu {})
 }
 
 fn render_postgres_table(value: Value) -> Result<String, Error> {
@@ -806,15 +807,15 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
         {% if schema.primaryKey is string %}
            , PRIMARY KEY ("{{schema.primaryKey}}") #nl
         {% endif %}
-        {% if schema.primaryKey is sequence %}
+        {% if schema.primaryKey is defined and schema.primaryKey is sequence %}
            , PRIMARY KEY ("{{schema.primaryKey | join('","')}}") #nl
         {% endif %}
-        {% if schema.foreignKeys is sequence %}
+        {% if schema.foreignKeys is defined and schema.foreignKeys is sequence %}
            {% for foreignKey in schema.foreignKeys %}
               {% if foreignKey.fields is string %}
                 , FOREIGN KEY ("{{foreignKey.fields}}") REFERENCES "{{foreignKey.reference.resource}}"("{{foreignKey.reference.fields}}") #nl
               {% endif %}
-              {% if foreignKey.fields is sequence %}
+              {% if foreignKey.fields is defined and foreignKey.fields is sequence %}
                 , FOREIGN KEY ("{{foreignKey.fields | join('","')}}")
                   REFERENCES "{{foreignKey.reference.resource}}"("{{foreignKey.reference.fields | join('","')}}") #nl
               {% endif %}
@@ -822,12 +823,12 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
         {% endif %}
     ); #nl
 
-    {% if schema.foreignKeys is sequence %}
+    {% if schema.foreignKeys is defined and schema.foreignKeys is sequence %}
         {% for foreignKey in schema.foreignKeys %}
             {% if foreignKey.fields is string %}
               CREATE INDEX "idx_{{rand()}}_{{foreignKey.fields}}" ON "{{title|default(name)}}" ("{{foreignKey.fields}}"); #nl
             {% endif %}
-            {% if foreignKey.fields is sequence %}
+            {% if foreignKey.fields is defined and foreignKey.fields is sequence %}
               CREATE INDEX "idx_{{rand()}}_{{foreignKey.fields | join("_")}}" ON "{{title|default(name)}}" ("{{foreignKey.fields | join('","')}}"); #nl
             {% endif %}
         {% endfor %}
@@ -845,7 +846,8 @@ fn render_postgres_table(value: Value) -> Result<String, Error> {
     env.add_template("postgres_resource", &postgres_table)
         .unwrap();
     let tmpl = env.get_template("postgres_resource").unwrap();
-    tmpl.render(value).context(JinjaSnafu {})
+    tmpl.render(minijinja::value::Serde(value))
+        .context(JinjaSnafu {})
 }
 
 lazy_static::lazy_static! {
@@ -1632,7 +1634,9 @@ fn create_sheet(
 
     let new_title = truncate_xlsx_title(title.clone(), &options.seperator);
 
-    let worksheet = workbook.add_worksheet_with_low_memory();
+    let worksheet = workbook
+        .add_worksheet_with_low_memory()
+        .context(XLSXSnafu {})?;
     worksheet.set_name(&new_title).context(XLSXSnafu {})?;
 
     for (row_num, row) in csv_reader.into_records().enumerate() {

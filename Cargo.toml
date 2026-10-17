@@ -33,7 +33,7 @@ pdatastructs = { version = "0.7.0", features = [
   "num-traits",
   "fixedbitset",
 ], default-features = false }
-streaming-stats = "0.2.3"
+qsv-stats = "0.56"
 counter = "0.7.1"
 crossbeam-channel = "0.5.15"
 csv-index = "0.1.6"
@@ -41,17 +41,21 @@ threadpool = "1.8.1"
 rayon = "1"
 log = "0.4.30"
 
-parquet = { version = "58.3.0", default-features = false, features = ["arrow", "snap"], optional = true }
-arrow = { version = "58.3.0", default-features = false, features = ["csv"], optional = true }
+parquet = { version = "60.0", default-features = false, features = ["arrow", "snap"], optional = true }
+arrow = { version = "60.0", default-features = false, features = ["csv"], optional = true }
 spreadsheet-ods = "1.0.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 postgres = "0.19.13"
-minijinja = { version = "2.20.0" }
-zip = { version = "8", default-features = false, features = ["deflate"] }
+minijinja = { version = "3.0", features = ["serde"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 rand = "0.10"
-rust_xlsxwriter = { version = "0.95.0", features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.100", features = ["constant_memory"] }
+
+[patch.crates-io]
+# use patched fork of spreadsheet-ods with updated deps; fixing RUSTSEC advisory on quick-xml
+spreadsheet-ods = { git = "https://github.com/jqnatividad/spreadsheet-ods", branch = "deps-bump-202607" }
 
 [profile.bench]
 debug = true
